@@ -25,7 +25,7 @@ Para usar una ubicación estable y que macOS conserve correctamente el permiso:
 
 ```bash
 make install
-open ~/Applications/Olympus.app
+open "~/Applications/Olympus Campus.app"
 ```
 
 La aplicación detecta en tiempo real si Claude y ChatGPT están abiertos. Esta

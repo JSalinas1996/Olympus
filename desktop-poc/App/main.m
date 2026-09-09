@@ -79,6 +79,13 @@ static NSBox *Separator(void) {
     content.wantsLayer = YES;
     content.layer.backgroundColor = NSColor.windowBackgroundColor.CGColor;
 
+    if (AXIsProcessTrusted()) {
+        [self showDashboard];
+        [self.window makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+        return;
+    }
+
     NSTextField *title = Label(@"Preparar Claude y ChatGPT", 27, NSFontWeightBold);
     NSTextField *subtitle = Label(@"Olympus usará las aplicaciones nativas abiertas en esta Mac y tus sesiones actuales.", 14, NSFontWeightRegular);
     subtitle.textColor = NSColor.secondaryLabelColor;
@@ -145,6 +152,116 @@ static NSBox *Separator(void) {
     [NSApp activateIgnoringOtherApps:YES];
     [self refresh:nil];
     self.timer = [NSTimer scheduledTimerWithTimeInterval:2 target:self selector:@selector(refresh:) userInfo:nil repeats:YES];
+}
+
+- (void)showDashboard {
+    [self.timer invalidate];
+    for (NSView *view in self.window.contentView.subviews.copy) [view removeFromSuperview];
+    self.window.title = @"Olympus";
+    [self.window setContentSize:NSMakeSize(960, 640)];
+    [self.window center];
+
+    NSView *content = self.window.contentView;
+    NSView *sidebar = [NSView new];
+    sidebar.translatesAutoresizingMaskIntoConstraints = NO;
+    sidebar.wantsLayer = YES;
+    sidebar.layer.backgroundColor = [NSColor colorWithWhite:0.08 alpha:1].CGColor;
+
+    NSTextField *brand = Label(@"OLYMPUS", 20, NSFontWeightBold);
+    brand.textColor = NSColor.whiteColor;
+    NSTextField *caption = Label(@"Campus personal", 12, NSFontWeightRegular);
+    caption.textColor = [NSColor colorWithWhite:0.65 alpha:1];
+    NSButton *home = [NSButton buttonWithTitle:@"⌂  Materias" target:self action:nil];
+    home.bordered = NO;
+    home.alignment = NSTextAlignmentLeft;
+    home.font = [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
+    home.contentTintColor = NSColor.whiteColor;
+    home.translatesAutoresizingMaskIntoConstraints = NO;
+    NSTextField *connection = Label(@"●  Claude y ChatGPT conectados", 12, NSFontWeightMedium);
+    connection.textColor = NSColor.systemGreenColor;
+    for (NSView *view in @[brand, caption, home, connection]) [sidebar addSubview:view];
+
+    NSTextField *title = Label(@"Mis materias", 30, NSFontWeightBold);
+    NSTextField *subtitle = Label(@"Organizá el material y los trabajos prácticos de cada materia.", 14, NSFontWeightRegular);
+    subtitle.textColor = NSColor.secondaryLabelColor;
+    NSButton *add = [NSButton buttonWithTitle:@"＋ Nueva materia" target:self action:@selector(addSubject:)];
+    add.bezelStyle = NSBezelStyleRounded;
+    add.controlSize = NSControlSizeLarge;
+    add.translatesAutoresizingMaskIntoConstraints = NO;
+
+    NSArray *subjects = [NSUserDefaults.standardUserDefaults arrayForKey:@"OlympusSubjects"] ?: @[];
+    NSStackView *list = [NSStackView stackViewWithViews:@[]];
+    list.orientation = NSUserInterfaceLayoutOrientationVertical;
+    list.alignment = NSLayoutAttributeLeading;
+    list.spacing = 12;
+    list.translatesAutoresizingMaskIntoConstraints = NO;
+    if (subjects.count == 0) {
+        NSTextField *emptyTitle = Label(@"Todavía no cargaste materias", 20, NSFontWeightSemibold);
+        NSTextField *emptyText = Label(@"Creá la primera para agregar consignas, leyes, material teórico y modelos corregidos.", 14, NSFontWeightRegular);
+        emptyText.textColor = NSColor.secondaryLabelColor;
+        [list addArrangedSubview:emptyTitle];
+        [list addArrangedSubview:emptyText];
+    } else {
+        for (NSString *subject in subjects) {
+            NSButton *button = [NSButton buttonWithTitle:[NSString stringWithFormat:@"  %@                                      Abrir  ›", subject] target:self action:@selector(openSubject:)];
+            button.identifier = subject;
+            button.bezelStyle = NSBezelStyleRounded;
+            button.controlSize = NSControlSizeLarge;
+            [button.widthAnchor constraintEqualToConstant:610].active = YES;
+            [list addArrangedSubview:button];
+        }
+    }
+
+    for (NSView *view in @[sidebar, title, subtitle, add, list]) [content addSubview:view];
+    [NSLayoutConstraint activateConstraints:@[
+        [sidebar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
+        [sidebar.topAnchor constraintEqualToAnchor:content.topAnchor],
+        [sidebar.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
+        [sidebar.widthAnchor constraintEqualToConstant:235],
+        [brand.leadingAnchor constraintEqualToAnchor:sidebar.leadingAnchor constant:28],
+        [brand.topAnchor constraintEqualToAnchor:sidebar.topAnchor constant:34],
+        [caption.leadingAnchor constraintEqualToAnchor:brand.leadingAnchor],
+        [caption.topAnchor constraintEqualToAnchor:brand.bottomAnchor constant:2],
+        [home.leadingAnchor constraintEqualToAnchor:brand.leadingAnchor],
+        [home.trailingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:-18],
+        [home.topAnchor constraintEqualToAnchor:caption.bottomAnchor constant:38],
+        [connection.leadingAnchor constraintEqualToAnchor:brand.leadingAnchor],
+        [connection.bottomAnchor constraintEqualToAnchor:sidebar.bottomAnchor constant:-28],
+        [title.leadingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:42],
+        [title.topAnchor constraintEqualToAnchor:content.topAnchor constant:42],
+        [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
+        [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],
+        [add.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-42],
+        [add.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
+        [list.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
+        [list.topAnchor constraintEqualToAnchor:subtitle.bottomAnchor constant:42]
+    ]];
+}
+
+- (void)addSubject:(id)sender {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = @"Nueva materia";
+    alert.informativeText = @"Escribí el nombre tal como aparece en tu carrera.";
+    [alert addButtonWithTitle:@"Crear materia"];
+    [alert addButtonWithTitle:@"Cancelar"];
+    NSTextField *input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 360, 28)];
+    input.placeholderString = @"Ej.: Personas Jurídicas";
+    alert.accessoryView = input;
+    if ([alert runModal] != NSAlertFirstButtonReturn) return;
+    NSString *name = [input.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if (name.length == 0) return;
+    NSMutableArray *subjects = [[NSUserDefaults.standardUserDefaults arrayForKey:@"OlympusSubjects"] mutableCopy] ?: [NSMutableArray array];
+    [subjects addObject:name];
+    [NSUserDefaults.standardUserDefaults setObject:subjects forKey:@"OlympusSubjects"];
+    [self showDashboard];
+}
+
+- (void)openSubject:(NSButton *)sender {
+    NSAlert *alert = [NSAlert new];
+    alert.messageText = sender.identifier ?: @"Materia";
+    alert.informativeText = @"La materia quedó creada. El siguiente módulo incorporará documentos, prompts, trabajos y devoluciones en esta pantalla.";
+    [alert addButtonWithTitle:@"Entendido"];
+    [alert runModal];
 }
 
 - (void)requestPermission:(id)sender {
