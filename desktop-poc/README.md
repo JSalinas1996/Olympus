@@ -21,5 +21,12 @@ make app
 open .build/Olympus.app
 ```
 
+Para usar una ubicación estable y que macOS conserve correctamente el permiso:
+
+```bash
+make install
+open ~/Applications/Olympus.app
+```
+
 La aplicación detecta en tiempo real si Claude y ChatGPT están abiertos. Esta
 etapa todavía no introduce texto ni pulsa el botón de envío.
