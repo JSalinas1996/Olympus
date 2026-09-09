@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { saveAssignment, uploadDocument } from "./actions";
+import { NativeCycle } from "@/components/native-cycle";
 
 const fields = [["projectInformation", "Información del proyecto", "project_information"], ["problemStatement", "Enunciado y situación problemática", "problem_statement"], ["objective", "Objetivo del trabajo", "objective"], ["instructions", "Consignas", "instructions"]] as const;
 
@@ -20,6 +21,6 @@ export default async function AssignmentPage({ params }: { params: Promise<{ sub
       <button className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white">Guardar información y prompts</button>
     </form>
     <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-7 shadow-sm"><h2 className="font-serif text-2xl font-semibold">Archivos en Drive</h2><form action={uploadDocument} className="mt-5 flex flex-wrap items-end gap-3"><input type="hidden" name="subjectId" value={subjectId}/><input type="hidden" name="assignmentId" value={assignmentId}/><label className="text-sm font-semibold">Tipo<select name="kind" className="mt-2 block rounded-xl border border-slate-200 px-3 py-2"><option value="source">Información y fuentes</option><option value="assignment">Enunciado</option><option value="rubric">Rúbrica</option><option value="precedent_work">Modelo anterior</option><option value="precedent_correction">Corrección anterior</option></select></label><input required name="file" type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.txt" className="text-sm"/><button className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold">Subir a Drive</button></form><div className="mt-5 space-y-2">{(documents ?? []).map((document) => <a key={document.id} href={document.drive_web_url ?? "#"} target="_blank" className="flex justify-between rounded-xl bg-slate-50 px-4 py-3 text-sm"><span>{document.name}</span><span className="text-slate-500">{document.kind}</span></a>)}</div></section>
-    <button disabled className="mt-6 w-full rounded-2xl bg-slate-300 px-5 py-4 font-semibold text-slate-600">Iniciar ciclo Claude → ChatGPT</button>
+    <NativeCycle subject={subject.name} assignment={assignment.title} studentPrompt={assignment.student_prompt_override ?? subject.student_prompt ?? ""} professorPrompt={assignment.professor_prompt_override ?? subject.professor_prompt ?? ""} projectInformation={assignment.project_information ?? ""} problemStatement={assignment.problem_statement ?? ""} objective={assignment.objective ?? ""} instructions={assignment.instructions ?? ""} documents={(documents ?? []).map(document => ({ name: document.name, kind: document.kind, url: document.drive_web_url }))}/>
   </div></main>;
 }

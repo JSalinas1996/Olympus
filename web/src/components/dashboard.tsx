@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Bot, Clock3, Copy, FileCheck2, Files, Grid2X2, LayoutList, LibraryBig, Plus, Search, Sparkles } from "lucide-react";
+import { BookOpen, Bot, Clock3, FileCheck2, Files, Grid2X2, LayoutList, LibraryBig, Plus, Search, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { type Subject } from "@/lib/demo-data";
 import Link from "next/link";
@@ -87,15 +87,15 @@ export function Dashboard({ initialSubjects }: { initialSubjects: Subject[] }) {
             <a className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50" href="#"><Sparkles className="size-5" />Ejecuciones de IA</a>
           </nav>
           <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-4">
-            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Este semestre</p><p className="mt-3 text-3xl font-semibold">4</p><p className="text-sm text-slate-500">materias en curso</p>
+            <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Mi carrera</p><p className="mt-3 text-3xl font-semibold">{initialSubjects.length}</p><p className="text-sm text-slate-500">materias cargadas</p>
             <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-slate-200"><div className="h-full w-3/5 rounded-full bg-blue-600" /></div>
           </div>
         </aside>
 
         <main className="min-w-0 px-5 py-8 lg:px-10 lg:py-10">
           <section className="mb-7 flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950 sm:flex-row sm:items-center">
-            <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-amber-100"><Copy className="size-5" /></div>
-            <div><p className="font-semibold">Modo asistido con tus suscripciones</p><p className="mt-1 text-sm text-amber-800">Olympus preparará cada prompt para copiar en Claude y ChatGPT. Después pegás sus respuestas y el sistema conserva las versiones, correcciones y el ciclo de trabajo.</p></div>
+            <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-amber-100"><Bot className="size-5" /></div>
+            <div><p className="font-semibold">Conectado con tus suscripciones</p><p className="mt-1 text-sm text-amber-800">Desde Olympus Campus podés enviar cada trabajo a Claude y pasar su respuesta a ChatGPT usando las aplicaciones nativas abiertas en tu Mac.</p></div>
           </section>
           <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
             <div><p className="text-sm font-semibold text-blue-700">Mi carrera</p><h1 className="mt-1 font-serif text-4xl font-semibold tracking-tight text-slate-950">Materias</h1><p className="mt-2 text-base text-slate-500">Organizá el material y continuá tus trabajos prácticos.</p></div>

@@ -16,7 +16,7 @@ probe: build
 app:
 	mkdir -p $(APP)/Contents/MacOS
 	cp App/Info.plist $(APP)/Contents/Info.plist
-	clang -fobjc-arc -framework AppKit -framework ApplicationServices $(APP_SRC) -o $(APP_BIN)
+	clang -fobjc-arc -framework AppKit -framework ApplicationServices -framework WebKit $(APP_SRC) -o $(APP_BIN)
 	xattr -cr $(APP)
 	codesign --force --sign - --identifier com.joaquinsalinas.olympus $(APP)
 	codesign --verify --deep --strict $(APP)

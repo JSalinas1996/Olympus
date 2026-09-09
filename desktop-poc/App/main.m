@@ -1,13 +1,16 @@
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <WebKit/WebKit.h>
 
-@interface OlympusDelegate : NSObject <NSApplicationDelegate>
+@interface OlympusDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler>
 @property NSWindow *window;
 @property NSTextField *permissionValue;
 @property NSTextField *claudeValue;
 @property NSTextField *chatGPTValue;
 @property NSTextField *detailValue;
 @property NSTimer *timer;
+@property WKWebView *webView;
+@property NSTask *backendTask;
 @end
 
 static id AXRead(AXUIElementRef element, CFStringRef attribute) {
@@ -31,6 +34,75 @@ static NSUInteger EditableControlCount(NSString *bundleIdentifier) {
     }
     CFRelease(root);
     return count;
+}
+
+static BOOL SendPromptToApplication(NSString *bundleIdentifier, NSString *prompt) {
+    NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject;
+    if (!application || !AXIsProcessTrusted() || prompt.length == 0) return NO;
+    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    [NSThread sleepForTimeInterval:1.2];
+    AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root];
+    AXUIElementRef target = NULL;
+    for (NSUInteger cursor = 0; cursor < queue.count && cursor < 5000; cursor++) {
+        AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor];
+        Boolean settable = false;
+        id role = AXRead(element, kAXRoleAttribute);
+        if (([role isEqual:(__bridge NSString *)kAXTextAreaRole] || [role isEqual:(__bridge NSString *)kAXTextFieldRole]) && AXUIElementIsAttributeSettable(element, kAXValueAttribute, &settable) == kAXErrorSuccess && settable) target = element;
+        id children = AXRead(element, kAXChildrenAttribute);
+        if ([children isKindOfClass:NSArray.class]) [queue addObjectsFromArray:children];
+    }
+    BOOL sent = NO;
+    if (target) {
+        AXUIElementSetAttributeValue(target, kAXFocusedAttribute, kCFBooleanTrue);
+        if (AXUIElementSetAttributeValue(target, kAXValueAttribute, (__bridge CFTypeRef)prompt) == kAXErrorSuccess) {
+            CGEventRef down = CGEventCreateKeyboardEvent(NULL, 36, true);
+            CGEventRef up = CGEventCreateKeyboardEvent(NULL, 36, false);
+            CGEventPost(kCGHIDEventTap, down); CGEventPost(kCGHIDEventTap, up);
+            CFRelease(down); CFRelease(up); sent = YES;
+        }
+    }
+    CFRelease(root);
+    return sent;
+}
+
+static NSString *LargestResponseText(NSString *bundleIdentifier, NSString *sentPrompt) {
+    NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject;
+    if (!application || !AXIsProcessTrusted()) return @"";
+    AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root];
+    NSString *best = @"";
+    for (NSUInteger cursor = 0; cursor < queue.count && cursor < 7000; cursor++) {
+        AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor];
+        id value = AXRead(element, kAXValueAttribute);
+        if ([value isKindOfClass:NSString.class]) {
+            NSString *text = [(NSString *)value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            if (text.length > best.length && text.length > 150 && ![text isEqualToString:sentPrompt]) best = text;
+        }
+        id children = AXRead(element, kAXChildrenAttribute);
+        if ([children isKindOfClass:NSArray.class]) [queue addObjectsFromArray:children];
+    }
+    CFRelease(root);
+    return best;
+}
+
+static NSString *WaitForResponse(NSString *bundleIdentifier, NSString *sentPrompt, NSTimeInterval timeout) {
+    NSString *previous = @""; NSUInteger stable = 0;
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+    while ([deadline timeIntervalSinceNow] > 0) {
+        [NSThread sleepForTimeInterval:5];
+        NSString *candidate = LargestResponseText(bundleIdentifier, sentPrompt);
+        if (candidate.length > 150 && [candidate isEqualToString:previous]) stable++; else stable = 0;
+        previous = candidate;
+        if (stable >= 2) return candidate;
+    }
+    return previous;
+}
+
+static NSString *JSONStringLiteral(NSString *value) {
+    NSData *data = [NSJSONSerialization dataWithJSONObject:@[value ?: @""] options:0 error:nil];
+    NSString *array = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return array.length >= 2 ? [array substringWithRange:NSMakeRange(1, array.length - 2)] : @"\"\"";
 }
 
 static NSTextField *Label(NSString *text, CGFloat size, NSFontWeight weight) {
@@ -158,110 +230,85 @@ static NSBox *Separator(void) {
     [self.timer invalidate];
     for (NSView *view in self.window.contentView.subviews.copy) [view removeFromSuperview];
     self.window.title = @"Olympus";
-    [self.window setContentSize:NSMakeSize(960, 640)];
+    [self.window setContentSize:NSMakeSize(1180, 760)];
     [self.window center];
-
-    NSView *content = self.window.contentView;
-    NSView *sidebar = [NSView new];
-    sidebar.translatesAutoresizingMaskIntoConstraints = NO;
-    sidebar.wantsLayer = YES;
-    sidebar.layer.backgroundColor = [NSColor colorWithWhite:0.08 alpha:1].CGColor;
-
-    NSTextField *brand = Label(@"OLYMPUS", 20, NSFontWeightBold);
-    brand.textColor = NSColor.whiteColor;
-    NSTextField *caption = Label(@"Campus personal", 12, NSFontWeightRegular);
-    caption.textColor = [NSColor colorWithWhite:0.65 alpha:1];
-    NSButton *home = [NSButton buttonWithTitle:@"⌂  Materias" target:self action:nil];
-    home.bordered = NO;
-    home.alignment = NSTextAlignmentLeft;
-    home.font = [NSFont systemFontOfSize:15 weight:NSFontWeightSemibold];
-    home.contentTintColor = NSColor.whiteColor;
-    home.translatesAutoresizingMaskIntoConstraints = NO;
-    NSTextField *connection = Label(@"●  Claude y ChatGPT conectados", 12, NSFontWeightMedium);
-    connection.textColor = NSColor.systemGreenColor;
-    for (NSView *view in @[brand, caption, home, connection]) [sidebar addSubview:view];
-
-    NSTextField *title = Label(@"Mis materias", 30, NSFontWeightBold);
-    NSTextField *subtitle = Label(@"Organizá el material y los trabajos prácticos de cada materia.", 14, NSFontWeightRegular);
-    subtitle.textColor = NSColor.secondaryLabelColor;
-    NSButton *add = [NSButton buttonWithTitle:@"＋ Nueva materia" target:self action:@selector(addSubject:)];
-    add.bezelStyle = NSBezelStyleRounded;
-    add.controlSize = NSControlSizeLarge;
-    add.translatesAutoresizingMaskIntoConstraints = NO;
-
-    NSArray *subjects = [NSUserDefaults.standardUserDefaults arrayForKey:@"OlympusSubjects"] ?: @[];
-    NSStackView *list = [NSStackView stackViewWithViews:@[]];
-    list.orientation = NSUserInterfaceLayoutOrientationVertical;
-    list.alignment = NSLayoutAttributeLeading;
-    list.spacing = 12;
-    list.translatesAutoresizingMaskIntoConstraints = NO;
-    if (subjects.count == 0) {
-        NSTextField *emptyTitle = Label(@"Todavía no cargaste materias", 20, NSFontWeightSemibold);
-        NSTextField *emptyText = Label(@"Creá la primera para agregar consignas, leyes, material teórico y modelos corregidos.", 14, NSFontWeightRegular);
-        emptyText.textColor = NSColor.secondaryLabelColor;
-        [list addArrangedSubview:emptyTitle];
-        [list addArrangedSubview:emptyText];
-    } else {
-        for (NSString *subject in subjects) {
-            NSButton *button = [NSButton buttonWithTitle:[NSString stringWithFormat:@"  %@                                      Abrir  ›", subject] target:self action:@selector(openSubject:)];
-            button.identifier = subject;
-            button.bezelStyle = NSBezelStyleRounded;
-            button.controlSize = NSControlSizeLarge;
-            [button.widthAnchor constraintEqualToConstant:610].active = YES;
-            [list addArrangedSubview:button];
-        }
-    }
-
-    for (NSView *view in @[sidebar, title, subtitle, add, list]) [content addSubview:view];
+    [self startBackend];
+    WKWebViewConfiguration *configuration = [WKWebViewConfiguration new];
+    [configuration.userContentController addScriptMessageHandler:self name:@"olympus"];
+    NSString *bridge = @"window.__OLYMPUS_NATIVE__=true;window.dispatchEvent(new Event('olympus-native-ready'));";
+    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:bridge injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:YES]];
+    self.webView = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:configuration];
+    self.webView.navigationDelegate = self;
+    self.webView.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.window.contentView addSubview:self.webView];
     [NSLayoutConstraint activateConstraints:@[
-        [sidebar.leadingAnchor constraintEqualToAnchor:content.leadingAnchor],
-        [sidebar.topAnchor constraintEqualToAnchor:content.topAnchor],
-        [sidebar.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
-        [sidebar.widthAnchor constraintEqualToConstant:235],
-        [brand.leadingAnchor constraintEqualToAnchor:sidebar.leadingAnchor constant:28],
-        [brand.topAnchor constraintEqualToAnchor:sidebar.topAnchor constant:34],
-        [caption.leadingAnchor constraintEqualToAnchor:brand.leadingAnchor],
-        [caption.topAnchor constraintEqualToAnchor:brand.bottomAnchor constant:2],
-        [home.leadingAnchor constraintEqualToAnchor:brand.leadingAnchor],
-        [home.trailingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:-18],
-        [home.topAnchor constraintEqualToAnchor:caption.bottomAnchor constant:38],
-        [connection.leadingAnchor constraintEqualToAnchor:brand.leadingAnchor],
-        [connection.bottomAnchor constraintEqualToAnchor:sidebar.bottomAnchor constant:-28],
-        [title.leadingAnchor constraintEqualToAnchor:sidebar.trailingAnchor constant:42],
-        [title.topAnchor constraintEqualToAnchor:content.topAnchor constant:42],
-        [subtitle.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-        [subtitle.topAnchor constraintEqualToAnchor:title.bottomAnchor constant:8],
-        [add.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-42],
-        [add.centerYAnchor constraintEqualToAnchor:title.centerYAnchor],
-        [list.leadingAnchor constraintEqualToAnchor:title.leadingAnchor],
-        [list.topAnchor constraintEqualToAnchor:subtitle.bottomAnchor constant:42]
+        [self.webView.leadingAnchor constraintEqualToAnchor:self.window.contentView.leadingAnchor],
+        [self.webView.trailingAnchor constraintEqualToAnchor:self.window.contentView.trailingAnchor],
+        [self.webView.topAnchor constraintEqualToAnchor:self.window.contentView.topAnchor],
+        [self.webView.bottomAnchor constraintEqualToAnchor:self.window.contentView.bottomAnchor]
     ]];
+    [self loadCampus];
 }
 
-- (void)addSubject:(id)sender {
-    NSAlert *alert = [NSAlert new];
-    alert.messageText = @"Nueva materia";
-    alert.informativeText = @"Escribí el nombre tal como aparece en tu carrera.";
-    [alert addButtonWithTitle:@"Crear materia"];
-    [alert addButtonWithTitle:@"Cancelar"];
-    NSTextField *input = [[NSTextField alloc] initWithFrame:NSMakeRect(0, 0, 360, 28)];
-    input.placeholderString = @"Ej.: Personas Jurídicas";
-    alert.accessoryView = input;
-    if ([alert runModal] != NSAlertFirstButtonReturn) return;
-    NSString *name = [input.stringValue stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-    if (name.length == 0) return;
-    NSMutableArray *subjects = [[NSUserDefaults.standardUserDefaults arrayForKey:@"OlympusSubjects"] mutableCopy] ?: [NSMutableArray array];
-    [subjects addObject:name];
-    [NSUserDefaults.standardUserDefaults setObject:subjects forKey:@"OlympusSubjects"];
-    [self showDashboard];
+- (void)startBackend {
+    if (self.backendTask.running) return;
+    self.backendTask = [NSTask new];
+    self.backendTask.executableURL = [NSURL fileURLWithPath:@"/Users/joaquin/.nvm/versions/node/v24.15.0/bin/npm"];
+    self.backendTask.currentDirectoryURL = [NSURL fileURLWithPath:@"/Users/joaquin/Documents/ChatGPT/Olympus/web"];
+    self.backendTask.arguments = @[@"run", @"dev", @"--", @"--port", @"43127"];
+    NSMutableDictionary *environment = NSProcessInfo.processInfo.environment.mutableCopy;
+    environment[@"PATH"] = [@"/Users/joaquin/.nvm/versions/node/v24.15.0/bin:" stringByAppendingString:environment[@"PATH"] ?: @""];
+    self.backendTask.environment = environment;
+    NSString *logPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs/Olympus Campus.log"];
+    [[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil];
+    NSFileHandle *log = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    self.backendTask.standardOutput = log;
+    self.backendTask.standardError = log;
+    NSError *error;
+    if (![self.backendTask launchAndReturnError:&error]) NSLog(@"No se pudo iniciar Olympus: %@", error);
 }
 
-- (void)openSubject:(NSButton *)sender {
-    NSAlert *alert = [NSAlert new];
-    alert.messageText = sender.identifier ?: @"Materia";
-    alert.informativeText = @"La materia quedó creada. El siguiente módulo incorporará documentos, prompts, trabajos y devoluciones en esta pantalla.";
-    [alert addButtonWithTitle:@"Entendido"];
-    [alert runModal];
+- (void)loadCampus {
+    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:43127"] cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:10]];
+}
+
+- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    [self performSelector:@selector(loadCampus) withObject:nil afterDelay:2];
+}
+
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+    [webView evaluateJavaScript:@"window.__OLYMPUS_NATIVE__=true;window.dispatchEvent(new Event('olympus-native-ready'));" completionHandler:nil];
+}
+
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (![message.body isKindOfClass:NSDictionary.class]) return;
+    NSDictionary *payload = message.body;
+    if ([payload[@"action"] isEqual:@"open-ai-apps"]) {
+        [[NSWorkspace sharedWorkspace] launchApplicationAtURL:[NSURL fileURLWithPath:@"/Applications/Claude.app"] options:NSWorkspaceLaunchDefault configuration:@{} error:nil];
+        NSURL *chatGPT = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:@"com.openai.codex"];
+        if (chatGPT) [[NSWorkspace sharedWorkspace] launchApplicationAtURL:chatGPT options:NSWorkspaceLaunchDefault configuration:@{} error:nil];
+    } else if ([payload[@"action"] isEqual:@"start-cycle"] && [payload[@"prompt"] isKindOfClass:NSString.class]) {
+        NSString *prompt = payload[@"prompt"];
+        NSString *professorPrompt = [payload[@"professorPrompt"] isKindOfClass:NSString.class] ? payload[@"professorPrompt"] : @"Corregí como catedrático.";
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            BOOL sent = SendPromptToApplication(@"com.anthropic.claudefordesktop", prompt);
+            NSString *draft = sent ? WaitForResponse(@"com.anthropic.claudefordesktop", prompt, 240) : @"";
+            NSString *evaluationPrompt = [NSString stringWithFormat:@"%@\n\nEvaluá este trabajo como catedrático sobre 10. Verificá las afirmaciones y citas, contrastá las consignas y la rúbrica, y enumerá cambios concretos. Cerrá con 'CALIFICACIÓN: X/10'.\n\nTRABAJO DE CLAUDE:\n%@", professorPrompt, draft];
+            BOOL evaluated = draft.length > 0 && SendPromptToApplication(@"com.openai.codex", evaluationPrompt);
+            NSString *evaluation = evaluated ? WaitForResponse(@"com.openai.codex", evaluationPrompt, 240) : @"";
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSString *status = evaluation.length > 0 ? @"Claude redactó el trabajo y ChatGPT completó la primera corrección." : (sent ? @"Claude recibió el trabajo, pero no pude leer una respuesta completa." : @"No encontré el cuadro de texto de Claude. Abrí un chat nuevo y volvé a iniciar.");
+                NSString *script = [NSString stringWithFormat:@"window.dispatchEvent(new CustomEvent('olympus-cycle-result',{detail:{status:%@,draft:%@,evaluation:%@}}))", JSONStringLiteral(status), JSONStringLiteral(draft), JSONStringLiteral(evaluation)];
+                [self.webView evaluateJavaScript:script completionHandler:nil];
+                [self.window makeKeyAndOrderFront:nil];
+                [NSApp activateIgnoringOtherApps:YES];
+            });
+        });
+    }
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification {
+    if (self.backendTask.running) [self.backendTask terminate];
 }
 
 - (void)requestPermission:(id)sender {
