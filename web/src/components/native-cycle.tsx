@@ -27,6 +27,7 @@ export function NativeCycle(props: Props) {
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState("");
   const [evaluation, setEvaluation] = useState("");
+  const [userFeedback, setUserFeedback] = useState("");
   useEffect(() => {
     const detect = () => setNative(Boolean(window.__OLYMPUS_NATIVE__ && window.webkit?.messageHandlers?.olympus));
     const receive = (event: Event) => { const detail = (event as CustomEvent<{status: string; draft: string; evaluation: string}>).detail; setStatus(detail.status); setDraft(detail.draft); setEvaluation(detail.evaluation); };
@@ -48,5 +49,6 @@ export function NativeCycle(props: Props) {
     {status && <p className="mt-4 rounded-xl bg-white px-4 py-3 text-sm font-medium text-blue-900">{status}</p>}
     {draft && <details className="mt-4 rounded-xl bg-white p-4"><summary className="cursor-pointer font-semibold">Versión de Claude</summary><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-slate-700">{draft}</pre><button type="button" onClick={downloadWord} className="mt-4 rounded-xl border border-blue-300 px-4 py-2 text-sm font-semibold text-blue-800">Descargar como Word</button></details>}
     {evaluation && <details open className="mt-4 rounded-xl bg-white p-4"><summary className="cursor-pointer font-semibold">Corrección de ChatGPT</summary><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-slate-700">{evaluation}</pre></details>}
+    {draft && <div className="mt-4 rounded-xl bg-white p-4"><label className="block text-sm font-semibold">Mi devolución y cambios solicitados</label><textarea value={userFeedback} onChange={event => setUserFeedback(event.target.value)} rows={4} className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm" placeholder="Ej. Reescribí la introducción con un tono más natural y agregá un cuadro comparativo…"/><button type="button" disabled={!userFeedback.trim()} onClick={() => { const revisionPrompt = `${prompt}\n\nVERSIÓN ANTERIOR:\n${draft}\n\nCORRECCIÓN DE CHATGPT:\n${evaluation}\n\nDEVOLUCIÓN DEL USUARIO:\n${userFeedback}\n\nRevisá el trabajo completo aplicando estas correcciones.`; setStatus("Claude está revisando el trabajo con tu devolución…"); setDraft(""); setEvaluation(""); send("start-cycle", { prompt: revisionPrompt, professorPrompt: props.professorPrompt }); }} className="mt-3 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">Aplicar cambios y volver a corregir</button></div>}
   </section>;
 }
