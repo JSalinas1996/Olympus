@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Bot, Clock3, FileCheck2, Files, Grid2X2, LayoutList, LibraryBig, Plus, Search, Sparkles } from "lucide-react";
+import { BookOpen, Bot, Clock3, Copy, FileCheck2, Files, Grid2X2, LayoutList, LibraryBig, Plus, Search, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { type Subject } from "@/lib/demo-data";
 import Link from "next/link";
@@ -73,7 +73,7 @@ export function Dashboard({ initialSubjects }: { initialSubjects: Subject[] }) {
             <div><p className="font-serif text-xl font-semibold">Olympus</p><p className="text-xs text-blue-200">Contador Público</p></div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="hidden items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs text-blue-100 sm:flex"><Bot className="size-4" />Claude + ChatGPT<span className="size-2 rounded-full bg-emerald-400" /></div>
+            <div className="hidden items-center gap-2 rounded-full border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100 sm:flex"><Bot className="size-4" />Modo sin créditos<span className="size-2 rounded-full bg-amber-300" /></div>
             <button aria-label="Abrir perfil" className="grid size-10 place-items-center rounded-full bg-white text-sm font-bold text-slate-900">JS</button>
           </div>
         </div>
@@ -93,6 +93,10 @@ export function Dashboard({ initialSubjects }: { initialSubjects: Subject[] }) {
         </aside>
 
         <main className="min-w-0 px-5 py-8 lg:px-10 lg:py-10">
+          <section className="mb-7 flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950 sm:flex-row sm:items-center">
+            <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-amber-100"><Copy className="size-5" /></div>
+            <div><p className="font-semibold">Modo asistido con tus suscripciones</p><p className="mt-1 text-sm text-amber-800">Olympus preparará cada prompt para copiar en Claude y ChatGPT. Después pegás sus respuestas y el sistema conserva las versiones, correcciones y el ciclo de trabajo.</p></div>
+          </section>
           <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
             <div><p className="text-sm font-semibold text-blue-700">Mi carrera</p><h1 className="mt-1 font-serif text-4xl font-semibold tracking-tight text-slate-950">Materias</h1><p className="mt-2 text-base text-slate-500">Organizá el material y continuá tus trabajos prácticos.</p></div>
             <Link href="/materias/nueva" className="inline-flex h-11 items-center justify-center gap-2 self-start rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 hover:bg-blue-700"><Plus className="size-4" />Nueva materia</Link>
