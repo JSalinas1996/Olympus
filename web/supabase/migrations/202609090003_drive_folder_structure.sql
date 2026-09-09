@@ -1,4 +1,5 @@
 alter table public.subjects add column if not exists drive_folder_id text;
+alter table public.assignments add column if not exists drive_folder_id text;
 
 create or replace function public.get_my_google_drive_tokens()
 returns text

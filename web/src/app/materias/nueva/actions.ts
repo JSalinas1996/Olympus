@@ -16,8 +16,12 @@ export async function createSubject(formData: FormData) {
   if (!user) redirect("/login");
   const { data: subject, error } = await supabase.from("subjects").insert({ owner_id: user.id, name: parsed.data.name, code: parsed.data.code || null, period: parsed.data.period || null, student_prompt: parsed.data.studentPrompt, professor_prompt: parsed.data.professorPrompt }).select("id,name").single();
   if (error) redirect("/materias/nueva?error=No pudimos guardar la materia");
+  const { data: assignments, error: assignmentsError } = await supabase.from("assignments").insert(
+    [1, 2, 3, 4].map((number) => ({ owner_id: user.id, subject_id: subject.id, title: `TP${number}` }))
+  ).select("id,title");
+  if (assignmentsError) redirect("/materias/nueva?error=No pudimos crear los trabajos prácticos");
   try {
-    await createSubjectDriveStructure(subject.id, subject.name);
+    await createSubjectDriveStructure(subject.id, subject.name, assignments);
   } catch {
     redirect("/?drive=structure-error");
   }
