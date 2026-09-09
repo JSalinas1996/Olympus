@@ -31,5 +31,5 @@ export async function register(formData: FormData) {
   });
   if (error) redirect(`/registro?error=${encodeURIComponent(error.message)}`);
   if (data.session) redirect("/");
-  redirect("/login?message=Revisá tu correo para confirmar el acceso y luego ingresá");
+  redirect("/login?message=Acceso creado. Ya podes ingresar.");
 }
