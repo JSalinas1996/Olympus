@@ -3,8 +3,32 @@ import { google, drive_v3 } from "googleapis";
 import { Readable } from "node:stream";
 import { createGoogleOAuthClient, decryptTokens } from "@/lib/drive/oauth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { extractDocument } from "@/lib/documents/extract";
 
 const folderMimeType = "application/vnd.google-apps.folder";
+const documentFolderByKind = {
+  source: "01 - Información y fuentes",
+  assignment: "02 - Enunciado y situación problemática",
+  rubric: "04 - Rúbrica de evaluación",
+  precedent_work: "06 - Modelos y correcciones anteriores",
+  precedent_correction: "06 - Modelos y correcciones anteriores",
+} as const;
+
+async function processDocumentRecord(documentId: string, file: File) {
+  const supabase = await createSupabaseServerClient();
+  await supabase.from("document_chunks").delete().eq("document_id", documentId);
+  const pages = await extractDocument(file); let position = 0;
+  const chunks = pages.flatMap(page => {
+    const text = page.text.replace(/\u0000/g, "").trim(); const results = [];
+    for (let offset = 0; offset < text.length; offset += 8000) results.push({ document_id: documentId, page_number: page.page, position: position++, content: text.slice(offset, offset + 8000) });
+    return results;
+  });
+  if (!chunks.length) throw new Error("No se pudo reconocer texto en el documento.");
+  for (let offset = 0; offset < chunks.length; offset += 100) {
+    const { error } = await supabase.from("document_chunks").insert(chunks.slice(offset, offset + 100)); if (error) throw error;
+  }
+  const { error } = await supabase.from("documents").update({ processing_status: "ready", processing_error: null, page_count: pages.length }).eq("id", documentId); if (error) throw error;
+}
 
 async function createFolder(drive: drive_v3.Drive, name: string, parentId?: string) {
   const response = await drive.files.create({
@@ -75,16 +99,40 @@ export async function uploadAssignmentDocument(input: {
   auth.setCredentials(decryptTokens(encryptedTokens));
   const drive = google.drive({ version: "v3", auth });
   const bytes = Buffer.from(await input.file.arrayBuffer());
+  const sectionFolderId = await findOrCreateFolder(drive, documentFolderByKind[input.kind], input.folderId);
   const response = await drive.files.create({
-    requestBody: { name: input.file.name, parents: [input.folderId] },
+    requestBody: { name: input.file.name, parents: [sectionFolderId] },
     media: { mimeType: input.file.type || "application/octet-stream", body: Readable.from(bytes) },
     fields: "id,webViewLink",
   });
   if (!response.data.id) throw new Error("Drive no devolvió el archivo creado.");
-  const { error: insertError } = await supabase.from("documents").insert({
+  const { data: document, error: insertError } = await supabase.from("documents").insert({
     subject_id: input.subjectId, assignment_id: input.assignmentId, kind: input.kind,
     name: input.file.name, mime_type: input.file.type || "application/octet-stream", size_bytes: input.file.size,
-    drive_file_id: response.data.id, drive_web_url: response.data.webViewLink, processing_status: "stored",
-  });
+    drive_file_id: response.data.id, drive_web_url: response.data.webViewLink, processing_status: "processing",
+  }).select("id").single();
   if (insertError) throw insertError;
+  try {
+    await processDocumentRecord(document.id, input.file);
+  } catch (processingError) {
+    const message = processingError instanceof Error ? processingError.message : "No se pudo procesar el archivo.";
+    await supabase.from("documents").update({ processing_status: "failed", processing_error: message.slice(0, 1000) }).eq("id", document.id);
+  }
+}
+
+export async function reprocessDriveDocument(documentId: string) {
+  const supabase = await createSupabaseServerClient();
+  const { data: document, error: documentError } = await supabase.from("documents").select("id,name,mime_type,drive_file_id").eq("id", documentId).single();
+  if (documentError || !document?.drive_file_id) throw documentError ?? new Error("El documento no tiene archivo en Drive.");
+  const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens"); if (error) throw error;
+  const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens)); const drive = google.drive({ version: "v3", auth });
+  await supabase.from("documents").update({ processing_status: "processing", processing_error: null }).eq("id", documentId);
+  try {
+    const response = await drive.files.get({ fileId: document.drive_file_id, alt: "media" }, { responseType: "arraybuffer" });
+    const file = new File([Buffer.from(response.data as ArrayBuffer)], document.name, { type: document.mime_type });
+    await processDocumentRecord(documentId, file);
+  } catch (processingError) {
+    const message = processingError instanceof Error ? processingError.message : "No se pudo procesar el archivo.";
+    await supabase.from("documents").update({ processing_status: "failed", processing_error: message.slice(0, 1000) }).eq("id", documentId);
+  }
 }

@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { uploadAssignmentDocument } from "@/lib/drive/storage";
+import { reprocessDriveDocument, uploadAssignmentDocument } from "@/lib/drive/storage";
 
 const textSchema = z.object({ subjectId: z.string().uuid(), assignmentId: z.string().uuid(), projectInformation: z.string().max(100000), problemStatement: z.string().max(100000), objective: z.string().max(50000), instructions: z.string().max(100000), studentPromptOverride: z.string().max(30000), professorPromptOverride: z.string().max(30000) });
 
@@ -22,4 +22,9 @@ export async function uploadDocument(formData: FormData) {
   if (!assignment?.drive_folder_id) redirect("/?error=drive-folder-missing");
   await uploadAssignmentDocument({ subjectId, assignmentId, folderId: assignment.drive_folder_id, kind: kind as "source" | "assignment" | "rubric" | "precedent_work" | "precedent_correction", file });
   revalidatePath(`/materias/${subjectId}/trabajos/${assignmentId}`);
+}
+
+export async function reprocessDocument(formData: FormData) {
+  const subjectId = String(formData.get("subjectId") || ""); const assignmentId = String(formData.get("assignmentId") || ""); const documentId = String(formData.get("documentId") || "");
+  await reprocessDriveDocument(documentId); revalidatePath(`/materias/${subjectId}/trabajos/${assignmentId}`);
 }

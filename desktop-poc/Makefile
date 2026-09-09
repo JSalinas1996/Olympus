@@ -3,6 +3,7 @@ SRC := Sources/main.m
 APP := .build/Olympus.app
 APP_BIN := $(APP)/Contents/MacOS/Olympus
 APP_SRC := App/main.m
+EXTRACTOR := .build/olympus-document-extractor
 
 .PHONY: build probe app open clean
 
@@ -15,6 +16,7 @@ probe: build
 
 app:
 	mkdir -p $(APP)/Contents/MacOS
+	clang -fobjc-arc -framework AppKit -framework PDFKit Tools/DocumentExtractor.m -o $(EXTRACTOR)
 	cp App/Info.plist $(APP)/Contents/Info.plist
 	clang -fobjc-arc -framework AppKit -framework ApplicationServices -framework WebKit $(APP_SRC) -o $(APP_BIN)
 	xattr -cr $(APP)

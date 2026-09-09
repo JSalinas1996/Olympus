@@ -19,7 +19,7 @@ type Props = {
   problemStatement: string;
   objective: string;
   instructions: string;
-  documents: { name: string; kind: string; url: string | null }[];
+  documents: { name: string; kind: string; url: string | null; status: string; text: string }[];
 };
 
 export function NativeCycle(props: Props) {
@@ -34,7 +34,7 @@ export function NativeCycle(props: Props) {
     detect(); window.addEventListener("olympus-native-ready", detect); window.addEventListener("olympus-cycle-result", receive);
     return () => { window.removeEventListener("olympus-native-ready", detect); window.removeEventListener("olympus-cycle-result", receive); };
   }, []);
-  const prompt = useMemo(() => `${props.studentPrompt}\n\nActuá como alumno de la carrera de Contador Público y desarrollá el trabajo con rigor académico. Usá exclusivamente la información provista o fuentes web verificables y citadas; si falta evidencia, indicalo y no inventes.\n\nMATERIA: ${props.subject}\nTRABAJO: ${props.assignment}\nINFORMACIÓN DEL PROYECTO:\n${props.projectInformation}\n\nSITUACIÓN PROBLEMÁTICA:\n${props.problemStatement}\n\nOBJETIVO:\n${props.objective}\n\nCONSIGNAS:\n${props.instructions}\n\nARCHIVOS DE RESPALDO EN DRIVE:\n${props.documents.map(d => `- ${d.name} (${d.kind})${d.url ? `: ${d.url}` : ""}`).join("\n")}\n\nPROMPT DEL CATEDRÁTICO QUE LUEGO EVALUARÁ EL RESULTADO:\n${props.professorPrompt}\n\nEntregá una primera versión completa, con citas y bibliografía comprobables.`, [props]);
+  const prompt = useMemo(() => `${props.studentPrompt}\n\nActuá como alumno de la carrera de Contador Público y desarrollá el trabajo con rigor académico. Usá exclusivamente la información provista o fuentes web verificables y citadas; si falta evidencia, indicalo y no inventes.\n\nMATERIA: ${props.subject}\nTRABAJO: ${props.assignment}\nINFORMACIÓN DEL PROYECTO:\n${props.projectInformation}\n\nSITUACIÓN PROBLEMÁTICA:\n${props.problemStatement}\n\nOBJETIVO:\n${props.objective}\n\nCONSIGNAS:\n${props.instructions}\n\nDOCUMENTOS PROCESADOS POR OLYMPUS:\n${props.documents.map(d => `\n--- ${d.name} (${d.kind}) ---\n${d.text || `[Sin texto disponible: ${d.status}]`}\nFuente Drive: ${d.url ?? "sin enlace"}`).join("\n")}\n\nPROMPT DEL CATEDRÁTICO QUE LUEGO EVALUARÁ EL RESULTADO:\n${props.professorPrompt}\n\nEntregá una primera versión completa, con citas y bibliografía comprobables.`, [props]);
   const send = (action: string, extra: Record<string, unknown> = {}) => window.webkit?.messageHandlers?.olympus?.postMessage({ action, ...extra });
   const downloadWord = async () => {
     const paragraphs = draft.split(/\n+/).map(line => new Paragraph({ children: [new TextRun(line)] }));
