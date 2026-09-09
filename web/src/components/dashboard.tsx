@@ -1,18 +1,11 @@
 "use client";
 
-import { BookOpen, Bot, Clock3, FileCheck2, Files, Grid2X2, LayoutList, LibraryBig, Plus, Search, SlidersHorizontal, Sparkles } from "lucide-react";
+import { BookOpen, Bot, Clock3, FileCheck2, Files, Grid2X2, LayoutList, LibraryBig, Plus, Search, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
-import { subjects, type Subject, type SubjectStatus } from "@/lib/demo-data";
+import { type Subject } from "@/lib/demo-data";
+import Link from "next/link";
 
 type ViewMode = "grid" | "list";
-type Filter = "Todas" | SubjectStatus | "Pendientes";
-const filters: Filter[] = ["Todas", "En curso", "Pendientes", "Finalizada"];
-
-function matchesFilter(subject: Subject, filter: Filter) {
-  if (filter === "Todas") return true;
-  if (filter === "Pendientes") return subject.update.includes("revisión") || subject.update.includes("pendiente");
-  return subject.status === filter;
-}
 
 function SubjectCard({ subject, view }: { subject: Subject; view: ViewMode }) {
   const tones = {
@@ -60,17 +53,16 @@ function SubjectCard({ subject, view }: { subject: Subject; view: ViewMode }) {
   );
 }
 
-export function Dashboard() {
+export function Dashboard({ initialSubjects }: { initialSubjects: Subject[] }) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("Todas");
   const [view, setView] = useState<ViewMode>("grid");
   const visibleSubjects = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("es");
-    return subjects.filter((subject) => {
+    return initialSubjects.filter((subject) => {
       const searchable = `${subject.name} ${subject.code} ${subject.period} ${subject.update}`.toLocaleLowerCase("es");
-      return matchesFilter(subject, filter) && (!normalized || searchable.includes(normalized));
+      return !normalized || searchable.includes(normalized);
     });
-  }, [filter, query]);
+  }, [initialSubjects, query]);
 
   return (
     <div className="min-h-screen bg-[#f7f8fb] text-slate-900">
@@ -103,16 +95,12 @@ export function Dashboard() {
         <main className="min-w-0 px-5 py-8 lg:px-10 lg:py-10">
           <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
             <div><p className="text-sm font-semibold text-blue-700">Mi carrera</p><h1 className="mt-1 font-serif text-4xl font-semibold tracking-tight text-slate-950">Materias</h1><p className="mt-2 text-base text-slate-500">Organizá el material y continuá tus trabajos prácticos.</p></div>
-            <button className="inline-flex h-11 items-center justify-center gap-2 self-start rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 hover:bg-blue-700"><Plus className="size-4" />Nueva materia</button>
+            <Link href="/materias/nueva" className="inline-flex h-11 items-center justify-center gap-2 self-start rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 hover:bg-blue-700"><Plus className="size-4" />Nueva materia</Link>
           </div>
 
           <section className="mt-8 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
               <label className="relative flex-1"><span className="sr-only">Buscar materias</span><Search className="pointer-events-none absolute left-3.5 top-1/2 size-5 -translate-y-1/2 text-slate-400" /><input value={query} onChange={(event) => setQuery(event.target.value)} className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 pl-11 pr-4 text-sm outline-none placeholder:text-slate-400 focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-50" placeholder="Buscar por materia, código o actividad…" /></label>
-              <div className="flex items-center gap-2 overflow-x-auto">
-                {filters.map((item) => <button key={item} onClick={() => setFilter(item)} className={`h-10 whitespace-nowrap rounded-xl px-3.5 text-sm font-semibold ${filter === item ? "bg-slate-950 text-white" : "text-slate-600 hover:bg-slate-100"}`}>{item}</button>)}
-                <button className="inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-xl border border-slate-200 px-3.5 text-sm font-semibold text-slate-600"><SlidersHorizontal className="size-4" />Más filtros</button>
-              </div>
               <div className="flex self-start rounded-xl bg-slate-100 p-1 xl:self-auto">
                 <button onClick={() => setView("grid")} aria-label="Vista en cuadrícula" aria-pressed={view === "grid"} className={`grid size-9 place-items-center rounded-lg ${view === "grid" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}><Grid2X2 className="size-4" /></button>
                 <button onClick={() => setView("list")} aria-label="Vista en lista" aria-pressed={view === "list"} className={`grid size-9 place-items-center rounded-lg ${view === "list" ? "bg-white text-slate-950 shadow-sm" : "text-slate-500"}`}><LayoutList className="size-4" /></button>
