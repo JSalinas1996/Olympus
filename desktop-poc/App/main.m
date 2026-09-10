@@ -36,15 +36,43 @@ static NSUInteger EditableControlCount(NSString *bundleIdentifier) {
     return count;
 }
 
+static BOOL ClickAXElement(AXUIElementRef element) {
+    CFTypeRef positionValue = NULL, sizeValue = NULL;
+    if (AXUIElementCopyAttributeValue(element, kAXPositionAttribute, &positionValue) != kAXErrorSuccess ||
+        AXUIElementCopyAttributeValue(element, kAXSizeAttribute, &sizeValue) != kAXErrorSuccess) {
+        if (positionValue) CFRelease(positionValue);
+        if (sizeValue) CFRelease(sizeValue);
+        return NO;
+    }
+    CGPoint position = CGPointZero; CGSize size = CGSizeZero;
+    BOOL valid = AXValueGetValue(positionValue, kAXValueCGPointType, &position) && AXValueGetValue(sizeValue, kAXValueCGSizeType, &size);
+    CFRelease(positionValue); CFRelease(sizeValue);
+    if (!valid) return NO;
+    CGPoint center = CGPointMake(position.x + size.width / 2.0, position.y + size.height / 2.0);
+    CGEventRef move = CGEventCreateMouseEvent(NULL, kCGEventMouseMoved, center, kCGMouseButtonLeft);
+    CGEventRef down = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, center, kCGMouseButtonLeft);
+    CGEventRef up = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, center, kCGMouseButtonLeft);
+    CGEventPost(kCGHIDEventTap, move); CGEventPost(kCGHIDEventTap, down); CGEventPost(kCGHIDEventTap, up);
+    CFRelease(move); CFRelease(down); CFRelease(up);
+    return YES;
+}
+
 static BOOL PressNewChatButton(NSRunningApplication *application) {
     AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
     NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root]; BOOL pressed = NO;
     for (NSUInteger cursor = 0; cursor < queue.count && cursor < 6000 && !pressed; cursor++) {
         AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor]; id role = AXRead(element, kAXRoleAttribute);
         if ([role isEqual:(__bridge NSString *)kAXButtonRole]) {
-            NSString *label = [NSString stringWithFormat:@"%@ %@", AXRead(element, kAXTitleAttribute) ?: @"", AXRead(element, kAXDescriptionAttribute) ?: @""];
-            NSString *lower = label.lowercaseString;
-            if ([lower isEqualToString:@"nuevo "] || [lower containsString:@"nuevo chat"] || [lower containsString:@"new chat"]) pressed = AXUIElementPerformAction(element, kAXPressAction) == kAXErrorSuccess;
+            id titleValue = AXRead(element, kAXTitleAttribute), descriptionValue = AXRead(element, kAXDescriptionAttribute);
+            NSString *title = [titleValue isKindOfClass:NSString.class] ? titleValue : @"";
+            NSString *description = [descriptionValue isKindOfClass:NSString.class] ? descriptionValue : @"";
+            NSString *lowerTitle = [title.lowercaseString stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+            NSString *lowerDescription = description.lowercaseString;
+            BOOL isNewChat = [lowerTitle isEqualToString:@"nuevo"] || [lowerTitle isEqualToString:@"nuevo chat"] || [lowerTitle isEqualToString:@"new chat"] || [lowerDescription containsString:@"nuevo chat"] || [lowerDescription containsString:@"chat nuevo"] || [lowerDescription containsString:@"new chat"];
+            if (isNewChat) {
+                pressed = AXUIElementPerformAction(element, kAXPressAction) == kAXErrorSuccess;
+                if (!pressed) pressed = ClickAXElement(element);
+            }
         }
         id children = AXRead(element, kAXChildrenAttribute); if ([children isKindOfClass:NSArray.class]) [queue addObjectsFromArray:children];
     }
@@ -54,57 +82,94 @@ static BOOL PressNewChatButton(NSRunningApplication *application) {
 static BOOL SendPromptToApplication(NSString *bundleIdentifier, NSString *prompt) {
     NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject;
     if (!application || !AXIsProcessTrusted() || prompt.length == 0) return NO;
-    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-    [NSThread sleepForTimeInterval:1.5];
-    if (!PressNewChatButton(application)) {
-        CGEventRef newDown = CGEventCreateKeyboardEvent(NULL, 45, true); CGEventRef newUp = CGEventCreateKeyboardEvent(NULL, 45, false);
-        CGEventSetFlags(newDown, kCGEventFlagMaskCommand); CGEventSetFlags(newUp, kCGEventFlagMaskCommand);
-        CGEventPost(kCGHIDEventTap, newDown); CGEventPost(kCGHIDEventTap, newUp); CFRelease(newDown); CFRelease(newUp);
+    [application activateWithOptions:NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps];
+    AXUIElementRef applicationRoot = AXUIElementCreateApplication(application.processIdentifier);
+    id windows = AXRead(applicationRoot, kAXWindowsAttribute);
+    if ([windows isKindOfClass:NSArray.class] && [windows count] > 0) {
+        AXUIElementPerformAction((__bridge AXUIElementRef)[windows firstObject], kAXRaiseAction);
     }
-    [NSThread sleepForTimeInterval:3.0];
-    AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
-    NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root];
-    AXUIElementRef target = NULL;
-    for (NSUInteger cursor = 0; cursor < queue.count && cursor < 5000; cursor++) {
-        AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor];
-        Boolean settable = false;
-        id role = AXRead(element, kAXRoleAttribute);
-        if (([role isEqual:(__bridge NSString *)kAXTextAreaRole] || [role isEqual:(__bridge NSString *)kAXTextFieldRole]) && AXUIElementIsAttributeSettable(element, kAXValueAttribute, &settable) == kAXErrorSuccess && settable) target = element;
-        id children = AXRead(element, kAXChildrenAttribute);
-        if ([children isKindOfClass:NSArray.class]) [queue addObjectsFromArray:children];
-    }
+    CFRelease(applicationRoot);
+    [NSThread sleepForTimeInterval:2.0];
+    // Never fall back to a blind keyboard shortcut: if a fresh chat cannot be
+    // opened explicitly, abort rather than contaminating an existing chat.
+    if (!PressNewChatButton(application)) return NO;
     BOOL sent = NO;
-    if (target) {
-        AXUIElementSetAttributeValue(target, kAXFocusedAttribute, kCFBooleanTrue);
-        if (AXUIElementSetAttributeValue(target, kAXValueAttribute, (__bridge CFTypeRef)prompt) == kAXErrorSuccess) {
-            CGEventRef down = CGEventCreateKeyboardEvent(NULL, 36, true);
-            CGEventRef up = CGEventCreateKeyboardEvent(NULL, 36, false);
-            CGEventPost(kCGHIDEventTap, down); CGEventPost(kCGHIDEventTap, up);
-            CFRelease(down); CFRelease(up); sent = YES;
+    for (NSUInteger attempt = 0; attempt < 10 && !sent; attempt++) {
+        [NSThread sleepForTimeInterval:2.0];
+        AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
+        NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root];
+        AXUIElementRef target = NULL;
+        for (NSUInteger cursor = 0; cursor < queue.count && cursor < 6000; cursor++) {
+            AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor];
+            Boolean settable = false;
+            id role = AXRead(element, kAXRoleAttribute);
+            if (([role isEqual:(__bridge NSString *)kAXTextAreaRole] || [role isEqual:(__bridge NSString *)kAXTextFieldRole]) && AXUIElementIsAttributeSettable(element, kAXValueAttribute, &settable) == kAXErrorSuccess && settable) target = element;
+            id children = AXRead(element, kAXChildrenAttribute);
+            if ([children isKindOfClass:NSArray.class]) [queue addObjectsFromArray:children];
         }
+        if (target) {
+            AXUIElementSetAttributeValue(target, kAXFocusedAttribute, kCFBooleanTrue);
+            if (AXUIElementSetAttributeValue(target, kAXValueAttribute, (__bridge CFTypeRef)prompt) == kAXErrorSuccess) {
+                CGEventRef down = CGEventCreateKeyboardEvent(NULL, 36, true);
+                CGEventRef up = CGEventCreateKeyboardEvent(NULL, 36, false);
+                CGEventPost(kCGHIDEventTap, down); CGEventPost(kCGHIDEventTap, up);
+                CFRelease(down); CFRelease(up); sent = YES;
+            }
+        }
+        CFRelease(root);
     }
-    CFRelease(root);
     return sent;
+}
+
+static NSString *NormalizedText(NSString *value) {
+    NSArray<NSString *> *parts = [value componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    return [[parts filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *part, NSDictionary *bindings) {
+        return part.length > 0;
+    }]] componentsJoinedByString:@" "];
+}
+
+static void AppendResponseText(AXUIElementRef element, NSString *sentPrompt, BOOL *afterPrompt, BOOL *finished, NSMutableArray<NSString *> *parts) {
+    if (*finished) return;
+    NSArray *attributes = @[(NSString *)kAXValueAttribute, (NSString *)kAXTitleAttribute, (NSString *)kAXDescriptionAttribute];
+    for (NSString *attribute in attributes) {
+        id raw = AXRead(element, (__bridge CFStringRef)attribute);
+        if (![raw isKindOfClass:NSString.class]) continue;
+        NSString *text = [(NSString *)raw stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        if (!text.length) continue;
+        NSString *normalized = NormalizedText(text);
+        NSString *normalizedPrompt = NormalizedText(sentPrompt);
+        NSString *promptPrefix = normalizedPrompt.length > 50 ? [normalizedPrompt substringToIndex:50] : normalizedPrompt;
+        if ([normalized isEqualToString:normalizedPrompt] || (promptPrefix.length && [normalized containsString:promptPrefix])) {
+            *afterPrompt = YES;
+            continue;
+        }
+        NSString *lower = text.lowercaseString;
+        BOOL isResponseHeading = [lower hasPrefix:@"claude respondió:"] || [lower hasPrefix:@"claude respondio:"] || [lower hasPrefix:@"chatgpt respondió:"] || [lower hasPrefix:@"chatgpt respondio:"] || [lower hasPrefix:@"chatgpt dijo:"];
+        if (isResponseHeading) {
+            *afterPrompt = YES;
+            if (text.length > 20 && ![parts.lastObject isEqualToString:text]) [parts addObject:text];
+            continue;
+        }
+        if (*afterPrompt && ([lower containsString:@"escriba su mensaje"] || [lower containsString:@"message chatgpt"])) {
+            *finished = YES;
+            return;
+        }
+        BOOL isTimestamp = [lower isEqualToString:@"ahora"] || [lower hasSuffix:@" min"] || [lower hasSuffix:@" mins"];
+        if (*afterPrompt && text.length > 12 && !isTimestamp && ![parts.lastObject isEqualToString:text]) [parts addObject:text];
+    }
+    id children = AXRead(element, kAXChildrenAttribute);
+    if ([children isKindOfClass:NSArray.class]) for (id child in children) AppendResponseText((__bridge AXUIElementRef)child, sentPrompt, afterPrompt, finished, parts);
 }
 
 static NSString *LargestResponseText(NSString *bundleIdentifier, NSString *sentPrompt) {
     NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject;
     if (!application || !AXIsProcessTrusted()) return @"";
     AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
-    NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root];
-    NSString *best = @"";
-    for (NSUInteger cursor = 0; cursor < queue.count && cursor < 7000; cursor++) {
-        AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor];
-        id value = AXRead(element, kAXValueAttribute);
-        if ([value isKindOfClass:NSString.class]) {
-            NSString *text = [(NSString *)value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-            if (text.length > best.length && text.length > 150 && ![text isEqualToString:sentPrompt]) best = text;
-        }
-        id children = AXRead(element, kAXChildrenAttribute);
-        if ([children isKindOfClass:NSArray.class]) [queue addObjectsFromArray:children];
-    }
+    BOOL afterPrompt = NO, finished = NO; NSMutableArray<NSString *> *parts = [NSMutableArray array];
+    AppendResponseText(root, sentPrompt, &afterPrompt, &finished, parts);
     CFRelease(root);
-    return best;
+    NSString *combined = [parts componentsJoinedByString:@"\n"];
+    return combined.length > 150 ? combined : @"";
 }
 
 static NSString *WaitForResponse(NSString *bundleIdentifier, NSString *sentPrompt, NSTimeInterval timeout) {
@@ -115,7 +180,7 @@ static NSString *WaitForResponse(NSString *bundleIdentifier, NSString *sentPromp
         NSString *candidate = LargestResponseText(bundleIdentifier, sentPrompt);
         if (candidate.length > 150 && [candidate isEqualToString:previous]) stable++; else stable = 0;
         previous = candidate;
-        if (stable >= 6) return candidate;
+        if (stable >= 2) return candidate;
     }
     return previous;
 }
