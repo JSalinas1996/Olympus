@@ -39,8 +39,13 @@ static NSUInteger EditableControlCount(NSString *bundleIdentifier) {
 static BOOL SendPromptToApplication(NSString *bundleIdentifier, NSString *prompt) {
     NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject;
     if (!application || !AXIsProcessTrusted() || prompt.length == 0) return NO;
-    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-    [NSThread sleepForTimeInterval:1.2];
+    [application activateWithOptions:0];
+    [NSThread sleepForTimeInterval:1.0];
+    CGEventRef newDown = CGEventCreateKeyboardEvent(NULL, 45, true);
+    CGEventRef newUp = CGEventCreateKeyboardEvent(NULL, 45, false);
+    CGEventSetFlags(newDown, kCGEventFlagMaskCommand); CGEventSetFlags(newUp, kCGEventFlagMaskCommand);
+    CGEventPost(kCGHIDEventTap, newDown); CGEventPost(kCGHIDEventTap, newUp);
+    CFRelease(newDown); CFRelease(newUp); [NSThread sleepForTimeInterval:1.5];
     AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
     NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root];
     AXUIElementRef target = NULL;
@@ -94,9 +99,14 @@ static NSString *WaitForResponse(NSString *bundleIdentifier, NSString *sentPromp
         NSString *candidate = LargestResponseText(bundleIdentifier, sentPrompt);
         if (candidate.length > 150 && [candidate isEqualToString:previous]) stable++; else stable = 0;
         previous = candidate;
-        if (stable >= 2) return candidate;
+        if (stable >= 6) return candidate;
     }
     return previous;
+}
+
+static BOOL IsPerfectEvaluation(NSString *evaluation) {
+    NSString *text = evaluation.lowercaseString;
+    return [text containsString:@"calificación: 10/10"] || [text containsString:@"calificacion: 10/10"] || [text containsString:@"calificación: 10 sobre 10"] || [text containsString:@"calificacion: 10 sobre 10"];
 }
 
 static NSString *JSONStringLiteral(NSString *value) {
@@ -284,20 +294,25 @@ static NSBox *Separator(void) {
     if (![message.body isKindOfClass:NSDictionary.class]) return;
     NSDictionary *payload = message.body;
     if ([payload[@"action"] isEqual:@"open-ai-apps"]) {
-        [[NSWorkspace sharedWorkspace] launchApplicationAtURL:[NSURL fileURLWithPath:@"/Applications/Claude.app"] options:NSWorkspaceLaunchDefault configuration:@{} error:nil];
+        NSWorkspaceOpenConfiguration *configuration = [NSWorkspaceOpenConfiguration configuration];
+        [[NSWorkspace sharedWorkspace] openApplicationAtURL:[NSURL fileURLWithPath:@"/Applications/Claude.app"] configuration:configuration completionHandler:nil];
         NSURL *chatGPT = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:@"com.openai.codex"];
-        if (chatGPT) [[NSWorkspace sharedWorkspace] launchApplicationAtURL:chatGPT options:NSWorkspaceLaunchDefault configuration:@{} error:nil];
+        if (chatGPT) [[NSWorkspace sharedWorkspace] openApplicationAtURL:chatGPT configuration:configuration completionHandler:nil];
     } else if ([payload[@"action"] isEqual:@"start-cycle"] && [payload[@"prompt"] isKindOfClass:NSString.class]) {
         NSString *prompt = payload[@"prompt"];
         NSString *professorPrompt = [payload[@"professorPrompt"] isKindOfClass:NSString.class] ? payload[@"professorPrompt"] : @"Corregí como catedrático.";
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            BOOL sent = SendPromptToApplication(@"com.anthropic.claudefordesktop", prompt);
-            NSString *draft = sent ? WaitForResponse(@"com.anthropic.claudefordesktop", prompt, 240) : @"";
-            NSString *evaluationPrompt = [NSString stringWithFormat:@"%@\n\nEvaluá este trabajo como catedrático sobre 10. Verificá las afirmaciones y citas, contrastá las consignas y la rúbrica, y enumerá cambios concretos. Cerrá con 'CALIFICACIÓN: X/10'.\n\nTRABAJO DE CLAUDE:\n%@", professorPrompt, draft];
-            BOOL evaluated = draft.length > 0 && SendPromptToApplication(@"com.openai.codex", evaluationPrompt);
-            NSString *evaluation = evaluated ? WaitForResponse(@"com.openai.codex", evaluationPrompt, 240) : @"";
+            NSString *roundPrompt = prompt, *draft = @"", *evaluation = @""; BOOL sent = NO;
+            for (NSUInteger round = 1; round <= 3; round++) {
+                sent = SendPromptToApplication(@"com.anthropic.claudefordesktop", roundPrompt); if (!sent) break;
+                draft = WaitForResponse(@"com.anthropic.claudefordesktop", roundPrompt, 360); if (!draft.length) break;
+                NSString *evaluationPrompt = [NSString stringWithFormat:@"%@\n\nEvaluá este trabajo como catedrático sobre 10. Verificá las afirmaciones y citas, contrastá las consignas y la rúbrica, y enumerá cambios concretos. Cerrá obligatoriamente con 'CALIFICACIÓN: X/10'.\n\nTRABAJO DE CLAUDE:\n%@", professorPrompt, draft];
+                if (!SendPromptToApplication(@"com.openai.codex", evaluationPrompt)) break;
+                evaluation = WaitForResponse(@"com.openai.codex", evaluationPrompt, 360); if (!evaluation.length || IsPerfectEvaluation(evaluation)) break;
+                roundPrompt = [NSString stringWithFormat:@"Reescribí el trabajo completo aplicando cada corrección del catedrático. Conservá únicamente afirmaciones y citas verificables.\n\nVERSIÓN ANTERIOR:\n%@\n\nCORRECCIÓN DEL CATEDRÁTICO:\n%@", draft, evaluation];
+            }
             dispatch_async(dispatch_get_main_queue(), ^{
-                NSString *status = evaluation.length > 0 ? @"Claude redactó el trabajo y ChatGPT completó la primera corrección." : (sent ? @"Claude recibió el trabajo, pero no pude leer una respuesta completa." : @"No encontré el cuadro de texto de Claude. Abrí un chat nuevo y volvé a iniciar.");
+                NSString *status = evaluation.length > 0 ? (IsPerfectEvaluation(evaluation) ? @"Ciclo completado: ChatGPT calificó la versión con 10/10." : @"Ciclo detenido después de tres rondas. Revisá la última corrección y agregá tu devolución.") : (sent ? @"Claude recibió el trabajo, pero no pude leer una respuesta completa." : @"No encontré el cuadro de texto de Claude. Comprobá que la aplicación esté abierta e iniciada.");
                 NSString *script = [NSString stringWithFormat:@"window.dispatchEvent(new CustomEvent('olympus-cycle-result',{detail:{status:%@,draft:%@,evaluation:%@}}))", JSONStringLiteral(status), JSONStringLiteral(draft), JSONStringLiteral(evaluation)];
                 [self.webView evaluateJavaScript:script completionHandler:nil];
                 [self.window makeKeyAndOrderFront:nil];

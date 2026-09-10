@@ -1,6 +1,6 @@
 BIN := .build/olympus-native-probe
 SRC := Sources/main.m
-APP := .build/Olympus.app
+APP := /tmp/OlympusCampusBuild.app
 APP_BIN := $(APP)/Contents/MacOS/Olympus
 APP_SRC := App/main.m
 EXTRACTOR := .build/olympus-document-extractor
@@ -15,6 +15,8 @@ probe: build
 	$(BIN) > probe-report.json
 
 app:
+	rm -rf $(APP)
+	mkdir -p .build
 	mkdir -p $(APP)/Contents/MacOS
 	clang -fobjc-arc -framework AppKit -framework PDFKit Tools/DocumentExtractor.m -o $(EXTRACTOR)
 	cp App/Info.plist $(APP)/Contents/Info.plist

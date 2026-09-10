@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Document, Packer, Paragraph, TextRun } from "docx";
+import { useRouter } from "next/navigation";
 
 declare global {
   interface Window {
@@ -11,6 +12,7 @@ declare global {
 }
 
 type Props = {
+  assignmentId: string;
   subject: string;
   assignment: string;
   studentPrompt: string;
@@ -23,6 +25,7 @@ type Props = {
 };
 
 export function NativeCycle(props: Props) {
+  const router = useRouter();
   const [native, setNative] = useState(false);
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState("");
@@ -30,10 +33,10 @@ export function NativeCycle(props: Props) {
   const [userFeedback, setUserFeedback] = useState("");
   useEffect(() => {
     const detect = () => setNative(Boolean(window.__OLYMPUS_NATIVE__ && window.webkit?.messageHandlers?.olympus));
-    const receive = (event: Event) => { const detail = (event as CustomEvent<{status: string; draft: string; evaluation: string}>).detail; setStatus(detail.status); setDraft(detail.draft); setEvaluation(detail.evaluation); };
+    const receive = (event: Event) => { const detail = (event as CustomEvent<{status: string; draft: string; evaluation: string}>).detail; setStatus(detail.status); setDraft(detail.draft); setEvaluation(detail.evaluation); if (detail.draft && detail.evaluation) fetch(`/api/assignments/${props.assignmentId}/cycle-results`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ draft: detail.draft, evaluation: detail.evaluation }) }).then(response => { if (!response.ok) throw new Error(); router.refresh(); }).catch(() => setStatus(`${detail.status} No pude guardar el resultado; descargalo antes de salir.`)); };
     detect(); window.addEventListener("olympus-native-ready", detect); window.addEventListener("olympus-cycle-result", receive);
     return () => { window.removeEventListener("olympus-native-ready", detect); window.removeEventListener("olympus-cycle-result", receive); };
-  }, []);
+  }, [props.assignmentId, router]);
   const prompt = useMemo(() => `${props.studentPrompt}\n\nActuá como alumno de la carrera de Contador Público y desarrollá el trabajo con rigor académico. Usá exclusivamente la información provista o fuentes web verificables y citadas; si falta evidencia, indicalo y no inventes.\n\nMATERIA: ${props.subject}\nTRABAJO: ${props.assignment}\nINFORMACIÓN DEL PROYECTO:\n${props.projectInformation}\n\nSITUACIÓN PROBLEMÁTICA:\n${props.problemStatement}\n\nOBJETIVO:\n${props.objective}\n\nCONSIGNAS:\n${props.instructions}\n\nDOCUMENTOS PROCESADOS POR OLYMPUS:\n${props.documents.map(d => `\n--- ${d.name} (${d.kind}) ---\n${d.text || `[Sin texto disponible: ${d.status}]`}\nFuente Drive: ${d.url ?? "sin enlace"}`).join("\n")}\n\nPROMPT DEL CATEDRÁTICO QUE LUEGO EVALUARÁ EL RESULTADO:\n${props.professorPrompt}\n\nEntregá una primera versión completa, con citas y bibliografía comprobables.`, [props]);
   const send = (action: string, extra: Record<string, unknown> = {}) => window.webkit?.messageHandlers?.olympus?.postMessage({ action, ...extra });
   const downloadWord = async () => {

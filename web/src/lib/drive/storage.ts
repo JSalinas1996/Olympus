@@ -136,3 +136,16 @@ export async function reprocessDriveDocument(documentId: string) {
     await supabase.from("documents").update({ processing_status: "failed", processing_error: message.slice(0, 1000) }).eq("id", documentId);
   }
 }
+
+export async function deleteDriveDocument(documentId: string) {
+  const supabase = await createSupabaseServerClient();
+  const { data: document, error: documentError } = await supabase.from("documents").select("drive_file_id").eq("id", documentId).single();
+  if (documentError) throw documentError;
+  if (document?.drive_file_id) {
+    const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens"); if (error) throw error;
+    const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
+    try { await google.drive({ version: "v3", auth }).files.delete({ fileId: document.drive_file_id }); }
+    catch (error) { if (!(error instanceof Error) || !error.message.includes("File not found")) throw error; }
+  }
+  const { error } = await supabase.from("documents").delete().eq("id", documentId); if (error) throw error;
+}

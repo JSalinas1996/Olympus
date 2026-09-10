@@ -37,7 +37,7 @@ export async function extractDocument(file: File): Promise<ExtractedPage[]> {
       const { stdout } = await execFileAsync("/usr/bin/textutil", ["-convert", "txt", "-stdout", source], { maxBuffer: 20 * 1024 * 1024 });
       return [{ page: 1, text: stdout, method: "text" }];
     }
-    if ([".png", ".jpg", ".jpeg", ".heic", ".tif", ".tiff"].includes(ext)) return recognizeImages([{ page: 1, path: source }]);
+    if ([".png", ".jpg", ".jpeg", ".heic", ".tif", ".tiff"].includes(ext)) return await recognizeImages([{ page: 1, path: source }]);
     if (ext !== ".pdf") throw new Error(`El formato ${ext || file.type} todavía no es compatible.`);
     const extractor = path.resolve(process.cwd(), "../desktop-poc/.build/olympus-document-extractor");
     const { stdout } = await execFileAsync(extractor, ["pdf", source], { maxBuffer: 50 * 1024 * 1024, timeout: 10 * 60 * 1000 });
