@@ -36,16 +36,32 @@ static NSUInteger EditableControlCount(NSString *bundleIdentifier) {
     return count;
 }
 
+static BOOL PressNewChatButton(NSRunningApplication *application) {
+    AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root]; BOOL pressed = NO;
+    for (NSUInteger cursor = 0; cursor < queue.count && cursor < 6000 && !pressed; cursor++) {
+        AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor]; id role = AXRead(element, kAXRoleAttribute);
+        if ([role isEqual:(__bridge NSString *)kAXButtonRole]) {
+            NSString *label = [NSString stringWithFormat:@"%@ %@", AXRead(element, kAXTitleAttribute) ?: @"", AXRead(element, kAXDescriptionAttribute) ?: @""];
+            NSString *lower = label.lowercaseString;
+            if ([lower isEqualToString:@"nuevo "] || [lower containsString:@"nuevo chat"] || [lower containsString:@"new chat"]) pressed = AXUIElementPerformAction(element, kAXPressAction) == kAXErrorSuccess;
+        }
+        id children = AXRead(element, kAXChildrenAttribute); if ([children isKindOfClass:NSArray.class]) [queue addObjectsFromArray:children];
+    }
+    CFRelease(root); return pressed;
+}
+
 static BOOL SendPromptToApplication(NSString *bundleIdentifier, NSString *prompt) {
     NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject;
     if (!application || !AXIsProcessTrusted() || prompt.length == 0) return NO;
-    [application activateWithOptions:0];
-    [NSThread sleepForTimeInterval:1.0];
-    CGEventRef newDown = CGEventCreateKeyboardEvent(NULL, 45, true);
-    CGEventRef newUp = CGEventCreateKeyboardEvent(NULL, 45, false);
-    CGEventSetFlags(newDown, kCGEventFlagMaskCommand); CGEventSetFlags(newUp, kCGEventFlagMaskCommand);
-    CGEventPost(kCGHIDEventTap, newDown); CGEventPost(kCGHIDEventTap, newUp);
-    CFRelease(newDown); CFRelease(newUp); [NSThread sleepForTimeInterval:1.5];
+    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    [NSThread sleepForTimeInterval:1.5];
+    if (!PressNewChatButton(application)) {
+        CGEventRef newDown = CGEventCreateKeyboardEvent(NULL, 45, true); CGEventRef newUp = CGEventCreateKeyboardEvent(NULL, 45, false);
+        CGEventSetFlags(newDown, kCGEventFlagMaskCommand); CGEventSetFlags(newUp, kCGEventFlagMaskCommand);
+        CGEventPost(kCGHIDEventTap, newDown); CGEventPost(kCGHIDEventTap, newUp); CFRelease(newDown); CFRelease(newUp);
+    }
+    [NSThread sleepForTimeInterval:3.0];
     AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
     NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root];
     AXUIElementRef target = NULL;
@@ -263,19 +279,27 @@ static NSBox *Separator(void) {
 - (void)startBackend {
     if (self.backendTask.running) return;
     self.backendTask = [NSTask new];
-    self.backendTask.executableURL = [NSURL fileURLWithPath:@"/Users/joaquin/.nvm/versions/node/v24.15.0/bin/npm"];
+    self.backendTask.executableURL = [NSURL fileURLWithPath:@"/bin/zsh"];
     self.backendTask.currentDirectoryURL = [NSURL fileURLWithPath:@"/Users/joaquin/Documents/ChatGPT/Olympus/web"];
-    self.backendTask.arguments = @[@"run", @"dev", @"--", @"--port", @"43127"];
+    self.backendTask.arguments = @[@"-lc", @"exec '/Users/joaquin/.nvm/versions/node/v24.15.0/bin/npm' run dev -- --hostname 127.0.0.1 --port 43127"];
     NSMutableDictionary *environment = NSProcessInfo.processInfo.environment.mutableCopy;
     environment[@"PATH"] = [@"/Users/joaquin/.nvm/versions/node/v24.15.0/bin:" stringByAppendingString:environment[@"PATH"] ?: @""];
     self.backendTask.environment = environment;
     NSString *logPath = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Logs/Olympus Campus.log"];
     [[NSFileManager defaultManager] createFileAtPath:logPath contents:nil attributes:nil];
     NSFileHandle *log = [NSFileHandle fileHandleForWritingAtPath:logPath];
+    [log truncateFileAtOffset:0];
     self.backendTask.standardOutput = log;
     self.backendTask.standardError = log;
+    self.backendTask.terminationHandler = ^(NSTask *task) {
+        NSString *message = [NSString stringWithFormat:@"\nOlympus backend finalizó con código %d.\n", task.terminationStatus];
+        [log writeData:[message dataUsingEncoding:NSUTF8StringEncoding]];
+    };
     NSError *error;
-    if (![self.backendTask launchAndReturnError:&error]) NSLog(@"No se pudo iniciar Olympus: %@", error);
+    if (![self.backendTask launchAndReturnError:&error]) {
+        NSString *message = [NSString stringWithFormat:@"No se pudo iniciar Olympus: %@\n", error.localizedDescription];
+        [log writeData:[message dataUsingEncoding:NSUTF8StringEncoding]];
+    }
 }
 
 - (void)loadCampus {
@@ -283,6 +307,10 @@ static NSBox *Separator(void) {
 }
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    [self performSelector:@selector(loadCampus) withObject:nil afterDelay:2];
+}
+
+- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
     [self performSelector:@selector(loadCampus) withObject:nil afterDelay:2];
 }
 
