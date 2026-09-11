@@ -7,7 +7,8 @@
     "prepare:extractor": "mkdir -p ../desktop-poc/.build && clang -fobjc-arc -framework AppKit -framework PDFKit ../desktop-poc/Tools/DocumentExtractor.m -o ../desktop-poc/.build/olympus-document-extractor",
     "build": "next build --webpack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.124.0",
@@ -15,6 +16,8 @@
     "@supabase/supabase-js": "^2.116.0",
     "@tesseract.js-data/spa": "^1.0.0",
     "docx": "^9.7.1",
+    "fast-xml-parser": "^5.11.1",
+    "fflate": "^0.8.3",
     "googleapis": "^178.1.1",
     "lucide-react": "^1.43.0",
     "mammoth": "^1.12.2",
@@ -34,6 +37,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.4",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

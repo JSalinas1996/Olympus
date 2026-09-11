@@ -1,32 +1,44 @@
-# Olympus Native Probe
+# Olympus Campus para macOS
 
-Prueba técnica de detección de Claude y ChatGPT mediante Accesibilidad de macOS. No envía mensajes ni lee conversaciones.
+Olympus Campus usa las sesiones ya iniciadas en las aplicaciones nativas de Claude y ChatGPT. No requiere créditos de API para el ciclo nativo.
 
-```bash
-make probe
-```
-
-El comando compila una pequeña utilidad nativa en Objective-C, la ejecuta y guarda
-el resultado en `probe-report.json`. El informe solo contiene estado de permisos,
-procesos, ventanas y etiquetas de controles editables; no incluye el contenido de
-las conversaciones.
-
-Si `accessibilityPermissionGranted` es `false`, la aplicación que ejecute Olympus deberá habilitarse en **Ajustes del Sistema → Privacidad y seguridad → Accesibilidad** antes de continuar con las pruebas de envío.
-
-También incluye una aplicación de diagnóstico que permanece abierta y guía la
-habilitación del permiso:
+## Instalación
 
 ```bash
-make app
-open .build/Olympus.app
-```
-
-Para usar una ubicación estable y que macOS conserve correctamente el permiso:
-
-```bash
+make test
 make install
-open "~/Applications/Olympus Campus.app"
+open "$HOME/Applications/Olympus Campus.app"
 ```
 
-La aplicación detecta en tiempo real si Claude y ChatGPT están abiertos. Esta
-etapa todavía no introduce texto ni pulsa el botón de envío.
+La primera vez, habilitá **Olympus Campus** en **Ajustes del Sistema → Privacidad y seguridad → Accesibilidad**. Si se reemplaza el ejecutable por una compilación nueva y macOS sigue mostrando el permiso como pendiente, apagá y encendé una vez el interruptor de Olympus Campus. Claude y ChatGPT deben estar abiertos y con las suscripciones iniciadas.
+
+La aplicación inicia el servidor local en `http://127.0.0.1:43127`. Sus registros quedan en `~/Library/Logs/Olympus Campus.log`.
+
+## Uso
+
+1. Creá una materia. Olympus crea cuatro trabajos prácticos y su estructura dentro de `Olympus/<Materia>/` en Google Drive.
+2. Entrá a un TP y completá la información, consignas, objetivo y los prompts de Claude y ChatGPT.
+3. Subí los materiales desde esa misma pantalla. Se admiten PDF, Word, Excel, imágenes, escaneos y texto. Olympus los guarda en la sección correspondiente de Drive y extrae el contenido para las IA.
+4. Elegí Word o Excel como formato final y pulsá **Iniciar Claude → ChatGPT → Claude**.
+5. Claude crea un archivo; ChatGPT devuelve una corrección textual con calificación; Olympus envía los cambios a Claude hasta obtener `CALIFICACIÓN: 10/10` o completar tres rondas.
+6. Sólo el archivo aprobado se guarda en `Olympus/<Materia>/<TP>/Entrega final`. Desde el TP se puede descargar el archivo o abrirlo en Drive.
+
+Las versiones intermedias sólo existen en `~/Library/Application Support/Olympus Campus/Runs/` durante el ciclo. Se eliminan al publicar, cancelar o fallar. Si Drive no acepta una entrega ya aprobada, Olympus conserva temporalmente ese archivo y muestra **Reintentar guardado en Drive**.
+
+## Verificación
+
+```bash
+cd ../web
+npm test
+npm run lint
+npm run build
+npm audit --omit=dev
+
+cd ../desktop-poc
+make test
+make app
+```
+
+`make test` valida la extracción local de Word y Excel, incluidas las fórmulas, y el reconocimiento de calificaciones. `make app` compila y verifica la firma de la aplicación.
+
+El comando opcional `make probe` genera `probe-report.json` con el estado de permisos, ventanas y controles editables. No incluye el contenido de las conversaciones.

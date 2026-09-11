@@ -1,6 +1,9 @@
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <WebKit/WebKit.h>
+#import "AIApplication.h"
+#import "CycleCoordinator.h"
+#import "FileCycle.h"
 
 @interface OlympusDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler>
 @property NSWindow *window;
@@ -11,6 +14,9 @@
 @property NSTimer *timer;
 @property WKWebView *webView;
 @property NSTask *backendTask;
+@property(atomic) BOOL cycleCancelled;
+@property(atomic) BOOL cycleRunning;
+@property NSString *activeRunDirectory;
 @end
 
 static id AXRead(AXUIElementRef element, CFStringRef attribute) {
@@ -82,7 +88,7 @@ static BOOL PressNewChatButton(NSRunningApplication *application) {
 static BOOL SendPromptToApplication(NSString *bundleIdentifier, NSString *prompt) {
     NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject;
     if (!application || !AXIsProcessTrusted() || prompt.length == 0) return NO;
-    [application activateWithOptions:NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps];
+    [application activateWithOptions:NSApplicationActivateAllWindows];
     AXUIElementRef applicationRoot = AXUIElementCreateApplication(application.processIdentifier);
     id windows = AXRead(applicationRoot, kAXWindowsAttribute);
     if ([windows isKindOfClass:NSArray.class] && [windows count] > 0) {
@@ -383,6 +389,13 @@ static NSBox *Separator(void) {
     [webView evaluateJavaScript:@"window.__OLYMPUS_NATIVE__=true;window.dispatchEvent(new Event('olympus-native-ready'));" completionHandler:nil];
 }
 
+- (void)emitEvent:(NSString *)name detail:(NSDictionary *)detail {
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:detail ?: @{} options:0 error:nil];
+    NSString *json = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding] ?: @"{}";
+    NSString *script = [NSString stringWithFormat:@"window.dispatchEvent(new CustomEvent(%@,{detail:%@}))", JSONStringLiteral(name), json];
+    [self.webView evaluateJavaScript:script completionHandler:nil];
+}
+
 - (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
     if (![message.body isKindOfClass:NSDictionary.class]) return;
     NSDictionary *payload = message.body;
@@ -391,25 +404,42 @@ static NSBox *Separator(void) {
         [[NSWorkspace sharedWorkspace] openApplicationAtURL:[NSURL fileURLWithPath:@"/Applications/Claude.app"] configuration:configuration completionHandler:nil];
         NSURL *chatGPT = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:@"com.openai.codex"];
         if (chatGPT) [[NSWorkspace sharedWorkspace] openApplicationAtURL:chatGPT configuration:configuration completionHandler:nil];
-    } else if ([payload[@"action"] isEqual:@"start-cycle"] && [payload[@"prompt"] isKindOfClass:NSString.class]) {
-        NSString *prompt = payload[@"prompt"];
-        NSString *professorPrompt = [payload[@"professorPrompt"] isKindOfClass:NSString.class] ? payload[@"professorPrompt"] : @"Corregí como catedrático.";
+    } else if ([payload[@"action"] isEqual:@"cancel-file-cycle"]) {
+        self.cycleCancelled = YES;
+    } else if ([payload[@"action"] isEqual:@"cycle-persisted"]) {
+        OlympusCleanRun(self.activeRunDirectory); self.activeRunDirectory = nil;
+    } else if ([payload[@"action"] isEqual:@"start-file-cycle"] && [payload[@"prompt"] isKindOfClass:NSString.class]) {
+        if (self.cycleRunning) {
+            [self emitEvent:@"olympus-cycle-failed" detail:@{ @"stage": @"fallido", @"status": @"Ya hay un ciclo en curso." }];
+            return;
+        }
+        if (self.activeRunDirectory.length) {
+            [self emitEvent:@"olympus-cycle-failed" detail:@{ @"stage": @"guardado pendiente", @"status": @"Hay una entrega aprobada pendiente de guardar. Reintentá el guardado antes de iniciar otro ciclo." }];
+            return;
+        }
+        self.cycleCancelled = NO; self.cycleRunning = YES;
+        NSDictionary *cyclePayload = [payload copy];
+        __weak OlympusDelegate *weakSelf = self;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            NSString *roundPrompt = prompt, *draft = @"", *evaluation = @""; BOOL sent = NO;
-            for (NSUInteger round = 1; round <= 3; round++) {
-                sent = SendPromptToApplication(@"com.anthropic.claudefordesktop", roundPrompt); if (!sent) break;
-                draft = WaitForResponse(@"com.anthropic.claudefordesktop", roundPrompt, 360); if (!draft.length) break;
-                NSString *evaluationPrompt = [NSString stringWithFormat:@"%@\n\nEvaluá este trabajo como catedrático sobre 10. Verificá las afirmaciones y citas, contrastá las consignas y la rúbrica, y enumerá cambios concretos. Cerrá obligatoriamente con 'CALIFICACIÓN: X/10'.\n\nTRABAJO DE CLAUDE:\n%@", professorPrompt, draft];
-                if (!SendPromptToApplication(@"com.openai.codex", evaluationPrompt)) break;
-                evaluation = WaitForResponse(@"com.openai.codex", evaluationPrompt, 360); if (!evaluation.length || IsPerfectEvaluation(evaluation)) break;
-                roundPrompt = [NSString stringWithFormat:@"Reescribí el trabajo completo aplicando cada corrección del catedrático. Conservá únicamente afirmaciones y citas verificables.\n\nVERSIÓN ANTERIOR:\n%@\n\nCORRECCIÓN DEL CATEDRÁTICO:\n%@", draft, evaluation];
-            }
+            NSError *cycleError = nil;
+            NSDictionary *result = OlympusRunFileCycle(cyclePayload, ^(NSDictionary *detail) {
+                dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf emitEvent:@"olympus-cycle-progress" detail:detail]; });
+            }, ^BOOL{
+                return weakSelf.cycleCancelled;
+            }, &cycleError);
             dispatch_async(dispatch_get_main_queue(), ^{
-                NSString *status = evaluation.length > 0 ? (IsPerfectEvaluation(evaluation) ? @"Ciclo completado: ChatGPT calificó la versión con 10/10." : @"Ciclo detenido después de tres rondas. Revisá la última corrección y agregá tu devolución.") : (sent ? @"Claude recibió el trabajo, pero no pude leer una respuesta completa." : @"No encontré el cuadro de texto de Claude. Comprobá que la aplicación esté abierta e iniciada.");
-                NSString *script = [NSString stringWithFormat:@"window.dispatchEvent(new CustomEvent('olympus-cycle-result',{detail:{status:%@,draft:%@,evaluation:%@}}))", JSONStringLiteral(status), JSONStringLiteral(draft), JSONStringLiteral(evaluation)];
-                [self.webView evaluateJavaScript:script completionHandler:nil];
-                [self.window makeKeyAndOrderFront:nil];
-                [NSApp activateIgnoringOtherApps:YES];
+                OlympusDelegate *strongSelf = weakSelf; if (!strongSelf) return;
+                strongSelf.cycleRunning = NO;
+                if (!result) {
+                    [strongSelf emitEvent:@"olympus-cycle-failed" detail:@{ @"stage": @"fallido", @"status": cycleError.localizedDescription ?: @"El ciclo se detuvo sin publicar ningún archivo." }];
+                } else if ([result[@"approved"] boolValue]) {
+                    strongSelf.activeRunDirectory = result[@"runDirectory"];
+                    NSMutableDictionary *publicResult = [result mutableCopy]; [publicResult removeObjectForKey:@"runDirectory"]; [publicResult removeObjectForKey:@"approved"];
+                    [strongSelf emitEvent:@"olympus-cycle-complete" detail:publicResult];
+                } else {
+                    [strongSelf emitEvent:@"olympus-cycle-failed" detail:result];
+                }
+                [strongSelf.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
             });
         });
     }

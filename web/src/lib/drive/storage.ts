@@ -149,3 +149,47 @@ export async function deleteDriveDocument(documentId: string) {
   }
   const { error } = await supabase.from("documents").delete().eq("id", documentId); if (error) throw error;
 }
+
+export async function downloadDriveDocument(documentId: string) {
+  const supabase = await createSupabaseServerClient();
+  const { data: document, error: documentError } = await supabase.from("documents").select("name,mime_type,drive_file_id").eq("id", documentId).eq("kind", "generated").single();
+  if (documentError || !document?.drive_file_id) throw documentError ?? new Error("La entrega final no está disponible.");
+  const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens");
+  if (error) throw error;
+  if (!encryptedTokens) throw new Error("Google Drive no está conectado.");
+  const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
+  const response = await google.drive({ version: "v3", auth }).files.get({ fileId: document.drive_file_id, alt: "media" }, { responseType: "arraybuffer" });
+  return { name: document.name, mimeType: document.mime_type || "application/octet-stream", bytes: Buffer.from(response.data as ArrayBuffer) };
+}
+
+export async function uploadFinalDelivery(input: { subjectId: string; assignmentId: string; folderId: string; file: File }) {
+  const supabase = await createSupabaseServerClient();
+  const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens");
+  if (error) throw error;
+  if (!encryptedTokens) throw new Error("Google Drive no está conectado.");
+  const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
+  const drive = google.drive({ version: "v3", auth });
+  const finalFolderId = await findOrCreateFolder(drive, "Entrega final", input.folderId);
+  const bytes = Buffer.from(await input.file.arrayBuffer());
+  const response = await drive.files.create({
+    requestBody: { name: input.file.name, parents: [finalFolderId] },
+    media: { mimeType: input.file.type || "application/octet-stream", body: Readable.from(bytes) },
+    fields: "id,webViewLink,webContentLink",
+  });
+  if (!response.data.id) throw new Error("Drive no devolvió el archivo final.");
+  const { data: previous } = await supabase.from("documents").select("id,drive_file_id").eq("assignment_id", input.assignmentId).eq("kind", "generated");
+  const { data: document, error: insertError } = await supabase.from("documents").insert({
+    subject_id: input.subjectId, assignment_id: input.assignmentId, kind: "generated", name: input.file.name,
+    mime_type: input.file.type || "application/octet-stream", size_bytes: input.file.size, drive_file_id: response.data.id,
+    drive_web_url: response.data.webViewLink, processing_status: "ready",
+  }).select("id,name,mime_type,size_bytes,drive_file_id,drive_web_url").single();
+  if (insertError) {
+    await drive.files.delete({ fileId: response.data.id }).catch(() => undefined);
+    throw insertError;
+  }
+  for (const item of previous ?? []) {
+    if (item.drive_file_id) await drive.files.delete({ fileId: item.drive_file_id }).catch(() => undefined);
+    await supabase.from("documents").delete().eq("id", item.id);
+  }
+  return document;
+}

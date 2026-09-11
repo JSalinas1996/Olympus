@@ -7,6 +7,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { createWorker, OEM } from "tesseract.js";
 import spanishData from "@tesseract.js-data/spa";
+import { extractWorkbook } from "./extract-office";
 
 const execFileAsync = promisify(execFile);
 export type ExtractedPage = { page: number; text: string; method: "embedded" | "ocr" | "text" };
@@ -30,6 +31,7 @@ export async function extractDocument(file: File): Promise<ExtractedPage[]> {
     const result = await mammoth.extractRawText({ buffer: bytes });
     return [{ page: 1, text: result.value, method: "text" }];
   }
+  if (ext === ".xlsx") return extractWorkbook(bytes);
   const folder = await mkdtemp(path.join(tmpdir(), "olympus-document-"));
   const source = path.join(folder, `source${ext || ".bin"}`); await writeFile(source, bytes);
   try {
