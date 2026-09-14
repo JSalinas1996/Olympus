@@ -5,7 +5,7 @@
 #import "CycleCoordinator.h"
 #import "FileCycle.h"
 
-@interface OlympusDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler, WKDownloadDelegate>
+@interface OlympusDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate>
 @property NSWindow *window;
 @property NSTextField *permissionValue;
 @property NSTextField *claudeValue;
@@ -336,6 +336,7 @@ static NSBox *Separator(void) {
     [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:bridge injectionTime:WKUserScriptInjectionTimeAtDocumentEnd forMainFrameOnly:YES]];
     self.webView = [[WKWebView alloc] initWithFrame:NSZeroRect configuration:configuration];
     self.webView.navigationDelegate = self;
+    self.webView.UIDelegate = self;
     self.webView.translatesAutoresizingMaskIntoConstraints = NO;
     [self.window.contentView addSubview:self.webView];
     [NSLayoutConstraint activateConstraints:@[
@@ -387,6 +388,21 @@ static NSBox *Separator(void) {
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
     [webView evaluateJavaScript:@"window.__OLYMPUS_NATIVE__=true;window.dispatchEvent(new Event('olympus-native-ready'));" completionHandler:nil];
+}
+
+- (void)webView:(WKWebView *)webView
+runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters
+initiatedByFrame:(WKFrameInfo *)frame
+completionHandler:(void (^)(NSArray<NSURL *> * _Nullable URLs))completionHandler {
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = YES;
+    panel.canChooseDirectories = parameters.allowsDirectories;
+    panel.allowsMultipleSelection = parameters.allowsMultipleSelection;
+    panel.resolvesAliases = YES;
+    panel.treatsFilePackagesAsDirectories = NO;
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse result) {
+        completionHandler(result == NSModalResponseOK ? panel.URLs : nil);
+    }];
 }
 
 - (void)showDownloadResult:(NSString *)message error:(BOOL)isError {
