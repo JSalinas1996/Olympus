@@ -65,14 +65,10 @@ export async function createSubjectDriveStructure(subjectId: string, subjectName
   const rootId = await findOrCreateFolder(drive, "Olympus");
   const subjectFolderId = await findOrCreateFolder(drive, subjectName, rootId);
   const sections = [
-    "01 - Información y fuentes",
-    "02 - Enunciado y situación problemática",
-    "03 - Objetivo del trabajo",
-    "04 - Rúbrica de evaluación",
-    "05 - Consignas",
-    "06 - Modelos y correcciones anteriores",
-    "07 - Devoluciones del alumno",
-    "08 - Versiones y entrega final",
+    "01 - Enunciado, consignas y rúbrica",
+    "02 - Módulos teóricos",
+    "03 - Modelos anteriores",
+    "Entrega final",
   ];
 
   for (const assignment of assignments) {
@@ -171,7 +167,7 @@ export async function downloadDriveDocument(documentId: string) {
   return { name: document.name, mimeType: document.mime_type || "application/octet-stream", bytes: Buffer.from(response.data as ArrayBuffer) };
 }
 
-export async function uploadFinalDelivery(input: { subjectId: string; assignmentId: string; folderId: string; file: File }) {
+export async function uploadFinalDeliveries(input: { subjectId: string; assignmentId: string; folderId: string; files: File[] }) {
   const supabase = await createSupabaseServerClient();
   const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens");
   if (error) throw error;
@@ -179,26 +175,47 @@ export async function uploadFinalDelivery(input: { subjectId: string; assignment
   const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
   const drive = google.drive({ version: "v3", auth });
   const finalFolderId = await findOrCreateFolder(drive, "Entrega final", input.folderId);
-  const bytes = Buffer.from(await input.file.arrayBuffer());
-  const response = await drive.files.create({
-    requestBody: { name: input.file.name, parents: [finalFolderId] },
-    media: { mimeType: input.file.type || "application/octet-stream", body: Readable.from(bytes) },
-    fields: "id,webViewLink,webContentLink",
-  });
-  if (!response.data.id) throw new Error("Drive no devolvió el archivo final.");
   const { data: previous } = await supabase.from("documents").select("id,drive_file_id").eq("assignment_id", input.assignmentId).eq("kind", "generated");
-  const { data: document, error: insertError } = await supabase.from("documents").insert({
-    subject_id: input.subjectId, assignment_id: input.assignmentId, kind: "generated", name: input.file.name,
-    mime_type: input.file.type || "application/octet-stream", size_bytes: input.file.size, drive_file_id: response.data.id,
-    drive_web_url: response.data.webViewLink, processing_status: "ready",
-  }).select("id,name,mime_type,size_bytes,drive_file_id,drive_web_url").single();
+  const staged: Array<{ file: File; driveId: string; driveUrl: string | null | undefined }> = [];
+  try {
+    for (const file of input.files) {
+      const bytes = Buffer.from(await file.arrayBuffer());
+      const response = await drive.files.create({
+        requestBody: { name: file.name, parents: [finalFolderId] },
+        media: { mimeType: file.type || "application/octet-stream", body: Readable.from(bytes) },
+        fields: "id,webViewLink",
+      });
+      if (!response.data.id) throw new Error(`Drive no devolvió el archivo final ${file.name}.`);
+      staged.push({ file, driveId: response.data.id, driveUrl: response.data.webViewLink });
+    }
+  } catch (uploadError) {
+    for (const item of staged) await drive.files.delete({ fileId: item.driveId }).catch(() => undefined);
+    throw uploadError;
+  }
+  const rows = staged.map(item => ({
+    subject_id: input.subjectId, assignment_id: input.assignmentId, kind: "generated", name: item.file.name,
+    mime_type: item.file.type || "application/octet-stream", size_bytes: item.file.size, drive_file_id: item.driveId,
+    drive_web_url: item.driveUrl, processing_status: "ready",
+  }));
+  const { data: documents, error: insertError } = await supabase.from("documents").insert(rows).select("id,name,mime_type,size_bytes,drive_file_id,drive_web_url");
   if (insertError) {
-    await drive.files.delete({ fileId: response.data.id }).catch(() => undefined);
+    for (const item of staged) await drive.files.delete({ fileId: item.driveId }).catch(() => undefined);
     throw insertError;
   }
-  for (const item of previous ?? []) {
-    if (item.drive_file_id) await drive.files.delete({ fileId: item.drive_file_id }).catch(() => undefined);
-    await supabase.from("documents").delete().eq("id", item.id);
+  if (!documents || documents.length !== staged.length) {
+    if (documents?.length) await supabase.from("documents").delete().in("id", documents.map(item => item.id));
+    for (const item of staged) await drive.files.delete({ fileId: item.driveId }).catch(() => undefined);
+    throw new Error("No se registraron todos los archivos finales.");
   }
-  return document;
+  const previousIds = (previous ?? []).map(item => item.id);
+  if (previousIds.length) {
+    const { error: deleteError } = await supabase.from("documents").delete().in("id", previousIds);
+    if (deleteError) {
+      await supabase.from("documents").delete().in("id", documents.map(item => item.id));
+      for (const item of staged) await drive.files.delete({ fileId: item.driveId }).catch(() => undefined);
+      throw deleteError;
+    }
+    for (const item of previous ?? []) if (item.drive_file_id) await drive.files.delete({ fileId: item.drive_file_id }).catch(() => undefined);
+  }
+  return documents;
 }

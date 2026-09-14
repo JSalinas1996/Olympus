@@ -17,6 +17,12 @@ int main(void) {
         Require(fabs(OlympusScoreFromEvaluation(@"CALIFICACION: 8,5 SOBRE 10").doubleValue - 8.5) < 0.001, @"reconoce nota decimal");
         Require(OlympusScoreFromEvaluation(@"sin nota") == nil, @"rechaza evaluaciones sin nota");
 
+        NSError *formatError = nil;
+        Require([OlympusValidatedFormats(@[@"docx"], &formatError) isEqual:@[@"docx"]], @"acepta Word");
+        Require([OlympusValidatedFormats(@[@"xlsx", @"docx", @"xlsx"], &formatError) isEqual:@[@"docx", @"xlsx"]], @"normaliza Word y Excel");
+        Require(OlympusValidatedFormats(@[], &formatError) == nil, @"rechaza una selección vacía");
+        Require(OlympusValidatedFormats(@[@"pdf"], &formatError) == nil, @"rechaza formatos ajenos");
+
         NSString *folder = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
         NSString *xlsx = [folder stringByAppendingPathComponent:@"test.xlsx"];

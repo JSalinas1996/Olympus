@@ -372,6 +372,58 @@ NSUInteger OlympusDownloadButtonCount(NSString *bundleIdentifier, NSString *exte
     return CopyDownloadButtons(bundleIdentifier, extension).count;
 }
 
+static NSString *ApplicationLimitMessage(NSString *bundleIdentifier);
+
+static NSArray *CopyOfficeDownloadButtons(NSString *bundleIdentifier) {
+    NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject; if (!application) return @[];
+    AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier); AXUIElementRef window = CopyFocusedWindowForApplication(root);
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)(window ?: root)], *matches = [NSMutableArray array];
+    for (NSUInteger cursor = 0; cursor < queue.count && cursor < 12000; cursor++) {
+        AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor]; NSString *role = AXString(element, kAXRoleAttribute);
+        if ([role isEqualToString:(NSString *)kAXButtonRole] || [role isEqualToString:@"AXLink"]) {
+            NSString *label = ElementLabel(element);
+            BOOL officeLabel = [label containsString:@".docx"] || [label containsString:@".xlsx"];
+            BOOL downloadLabel = [label containsString:@"descargar archivo"] || [label containsString:@"descargar y abrir"] || [label containsString:@"download file"];
+            BOOL excluded = [label containsString:@"actualizar"] || [label containsString:@"update"] || [label containsString:@"install"];
+            if ((officeLabel || downloadLabel) && !excluded) [matches addObject:(__bridge id)element];
+        }
+        [queue addObjectsFromArray:AXChildren(element)];
+    }
+    if (window) CFRelease(window); CFRelease(root); return matches;
+}
+
+NSUInteger OlympusOfficeDownloadButtonCount(NSString *bundleIdentifier) {
+    return CopyOfficeDownloadButtons(bundleIdentifier).count;
+}
+
+BOOL OlympusWaitAndPressNewOfficeDownloads(NSString *bundleIdentifier, NSUInteger previousCount, NSUInteger expectedCount, NSTimeInterval timeout, NSError **error) {
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout]; NSDate *limitCheckAt = [NSDate dateWithTimeIntervalSinceNow:6.0];
+    while (deadline.timeIntervalSinceNow > 0) {
+        NSArray *buttons = CopyOfficeDownloadButtons(bundleIdentifier);
+        if (buttons.count >= previousCount + expectedCount) {
+            NSRange newRange = NSMakeRange(buttons.count - expectedCount, expectedCount);
+            for (id item in [buttons subarrayWithRange:newRange]) {
+                if (!ClickElement((__bridge AXUIElementRef)item)) {
+                    if (error) *error = AIError(8, @"Olympus encontró la entrega de Claude pero no pudo descargar todos los archivos.");
+                    return NO;
+                }
+                [NSThread sleepForTimeInterval:0.7];
+            }
+            return YES;
+        }
+        if (limitCheckAt.timeIntervalSinceNow <= 0) {
+            NSString *limit = ApplicationLimitMessage(bundleIdentifier);
+            if (limit.length) {
+                if (error) *error = AIError(7, [NSString stringWithFormat:@"Claude alcanzó el límite temporal de la suscripción. %@. Volvé a iniciar el ciclo después del horario indicado por Claude.", limit]);
+                return NO;
+            }
+        }
+        [NSThread sleepForTimeInterval:3.0];
+    }
+    if (error) *error = AIError(6, @"Claude no mostró todos los archivos Word/Excel descargables dentro del tiempo esperado.");
+    return NO;
+}
+
 static NSString *ApplicationLimitMessage(NSString *bundleIdentifier) {
     NSRunningApplication *application = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject; if (!application) return nil;
     AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier); AXUIElementRef window = CopyFocusedWindowForApplication(root);

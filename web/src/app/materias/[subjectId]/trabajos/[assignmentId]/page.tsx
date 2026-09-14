@@ -19,7 +19,7 @@ export default async function AssignmentPage({ params }: { params: Promise<{ sub
   ]);
   if (!subject || !assignment) notFound();
 
-  const finalDelivery = (documents ?? []).find(document => document.kind === "generated") ?? null;
+  const finalDeliveries = (documents ?? []).filter(document => document.kind === "generated");
   const materials = (documents ?? []).filter(document => document.kind !== "generated");
   const legacySections = [
     ["Información del proyecto", assignment.project_information],
@@ -69,6 +69,6 @@ export default async function AssignmentPage({ params }: { params: Promise<{ sub
       {legacySections.length > 0 && <details className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4"><summary className="cursor-pointer font-semibold text-amber-950">Información anterior</summary><p className="mt-2 text-xs text-amber-800">Se conserva y continúa formando parte del contexto de las IA.</p><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-amber-950">{legacyText}</pre></details>}
     </section>
 
-    <NativeCycle assignmentId={assignmentId} subject={subject.name} assignment={assignment.title} studentPrompt={assignment.student_prompt_override ?? subject.student_prompt ?? ""} professorPrompt={assignment.professor_prompt_override ?? subject.professor_prompt ?? ""} reviewContext={reviewContext} hasUsableMaterial={reviewDocuments.length > 0 || Boolean((assignment.manual_notes ?? "").trim()) || Boolean(legacyText)} failedBriefNames={failedBriefNames} finalDelivery={finalDelivery ? { id: finalDelivery.id, name: finalDelivery.name, mimeType: finalDelivery.mime_type, url: finalDelivery.drive_web_url, evaluation: finalEvaluations?.[0]?.feedback ?? "" } : null}/>
+    <NativeCycle assignmentId={assignmentId} studentPrompt={assignment.student_prompt_override ?? subject.student_prompt ?? ""} professorPrompt={assignment.professor_prompt_override ?? subject.professor_prompt ?? ""} reviewContext={reviewContext} hasUsableMaterial={reviewDocuments.length > 0 || Boolean((assignment.manual_notes ?? "").trim()) || Boolean(legacyText)} failedBriefNames={failedBriefNames} finalDeliveries={finalDeliveries.map(delivery => ({ id: delivery.id, name: delivery.name, mimeType: delivery.mime_type, url: delivery.drive_web_url, evaluation: finalEvaluations?.[0]?.feedback ?? "" }))}/>
   </div></main>;
 }

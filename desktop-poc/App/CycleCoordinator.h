@@ -7,5 +7,6 @@ typedef BOOL (^OlympusCancellationCheck)(void);
 
 NSDictionary * _Nullable OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler progress, OlympusCancellationCheck cancelled, NSError **error);
 NSNumber * _Nullable OlympusScoreFromEvaluation(NSString *evaluation);
+NSArray<NSString *> * _Nullable OlympusValidatedFormats(id rawFormats, NSError **error);
 
 NS_ASSUME_NONNULL_END
