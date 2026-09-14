@@ -7,6 +7,49 @@ import { deleteDriveDocument, reprocessDriveDocument, uploadAssignmentDocument }
 
 const textSchema = z.object({ subjectId: z.string().uuid(), assignmentId: z.string().uuid(), projectInformation: z.string().max(100000), problemStatement: z.string().max(100000), objective: z.string().max(50000), rubricText: z.string().max(100000), instructions: z.string().max(100000), studentPromptOverride: z.string().max(30000), professorPromptOverride: z.string().max(30000) });
 
+const assignmentSettingsSchema = z.object({
+  subjectId: z.string().uuid(),
+  assignmentId: z.string().uuid(),
+  manualNotes: z.string().max(100000),
+  studentPromptOverride: z.string().max(30000),
+  professorPromptOverride: z.string().max(30000),
+});
+
+const modelFeedbackSchema = z.object({
+  subjectId: z.string().uuid(),
+  assignmentId: z.string().uuid(),
+  documentId: z.string().uuid(),
+  teacherFeedback: z.string().max(100000),
+});
+
+export async function saveAssignmentSettings(formData: FormData) {
+  const parsed = assignmentSettingsSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) redirect("/?error=invalid-assignment-settings");
+  const { subjectId, assignmentId, manualNotes, studentPromptOverride, professorPromptOverride } = parsed.data;
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.from("assignments").update({
+    manual_notes: manualNotes,
+    student_prompt_override: studentPromptOverride || null,
+    professor_prompt_override: professorPromptOverride || null,
+    updated_at: new Date().toISOString(),
+  }).eq("id", assignmentId).eq("subject_id", subjectId);
+  if (error) redirect("/?error=save-assignment-settings");
+  revalidatePath(`/materias/${subjectId}/trabajos/${assignmentId}`);
+}
+
+export async function saveModelFeedback(formData: FormData) {
+  const parsed = modelFeedbackSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) redirect("/?error=invalid-model-feedback");
+  const { subjectId, assignmentId, documentId, teacherFeedback } = parsed.data;
+  const supabase = await createSupabaseServerClient();
+  const { error } = await supabase.from("documents").update({ teacher_feedback: teacherFeedback })
+    .eq("id", documentId)
+    .eq("assignment_id", assignmentId)
+    .in("kind", ["precedent_work", "precedent_correction"]);
+  if (error) redirect("/?error=save-model-feedback");
+  revalidatePath(`/materias/${subjectId}/trabajos/${assignmentId}`);
+}
+
 export async function saveAssignment(formData: FormData) {
   const parsed = textSchema.safeParse(Object.fromEntries(formData)); if (!parsed.success) redirect("/?error=invalid-assignment");
   const { subjectId, assignmentId, rubricText, ...values } = parsed.data; const supabase = await createSupabaseServerClient();
