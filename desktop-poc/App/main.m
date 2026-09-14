@@ -5,7 +5,7 @@
 #import "CycleCoordinator.h"
 #import "FileCycle.h"
 
-@interface OlympusDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler>
+@interface OlympusDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler, WKDownloadDelegate>
 @property NSWindow *window;
 @property NSTextField *permissionValue;
 @property NSTextField *claudeValue;
@@ -389,6 +389,115 @@ static NSBox *Separator(void) {
     [webView evaluateJavaScript:@"window.__OLYMPUS_NATIVE__=true;window.dispatchEvent(new Event('olympus-native-ready'));" completionHandler:nil];
 }
 
+- (void)showDownloadResult:(NSString *)message error:(BOOL)isError {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSAlert *alert = [NSAlert new];
+        alert.messageText = isError ? @"No se pudo descargar" : @"Archivo descargado";
+        alert.informativeText = message;
+        [alert addButtonWithTitle:@"Aceptar"];
+        [alert beginSheetModalForWindow:self.window completionHandler:nil];
+    });
+}
+
+- (NSString *)filenameFromResponse:(NSHTTPURLResponse *)response {
+    NSString *disposition = response.allHeaderFields[@"Content-Disposition"];
+    if (![disposition isKindOfClass:NSString.class]) {
+        for (NSString *key in response.allHeaderFields) {
+            if ([key.lowercaseString isEqualToString:@"content-disposition"]) {
+                disposition = response.allHeaderFields[key];
+                break;
+            }
+        }
+    }
+    NSRange encodedRange = [disposition rangeOfString:@"filename*=UTF-8''" options:NSCaseInsensitiveSearch];
+    if (encodedRange.location != NSNotFound) {
+        NSString *encoded = [disposition substringFromIndex:NSMaxRange(encodedRange)];
+        encoded = [[encoded componentsSeparatedByString:@";"] firstObject];
+        NSString *decoded = [encoded stringByRemovingPercentEncoding];
+        if (decoded.length) return decoded.lastPathComponent;
+    }
+    NSRegularExpression *expression = [NSRegularExpression regularExpressionWithPattern:@"filename=\\\"([^\\\"]+)\\\"" options:NSRegularExpressionCaseInsensitive error:nil];
+    NSTextCheckingResult *match = [expression firstMatchInString:disposition ?: @"" options:0 range:NSMakeRange(0, disposition.length)];
+    if (match.numberOfRanges > 1) return [[disposition substringWithRange:[match rangeAtIndex:1]] lastPathComponent];
+    return @"Entrega final.docx";
+}
+
+- (NSURL *)availableDownloadURLForName:(NSString *)name {
+    NSURL *downloads = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+    NSURL *destination = [downloads URLByAppendingPathComponent:name.lastPathComponent];
+    if (![NSFileManager.defaultManager fileExistsAtPath:destination.path]) return destination;
+    NSString *stem = name.stringByDeletingPathExtension, *extension = name.pathExtension;
+    NSDateFormatter *formatter = [NSDateFormatter new]; formatter.dateFormat = @"yyyy-MM-dd HH.mm.ss";
+    NSString *unique = [NSString stringWithFormat:@"%@ %@%@", stem, [formatter stringFromDate:NSDate.date], extension.length ? [@"." stringByAppendingString:extension] : @""];
+    return [downloads URLByAppendingPathComponent:unique];
+}
+
+- (void)downloadFinalAtURL:(NSURL *)url {
+    __weak OlympusDelegate *weakSelf = self;
+    [self.webView.configuration.websiteDataStore.httpCookieStore getAllCookies:^(NSArray<NSHTTPCookie *> *cookies) {
+        NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:120];
+        NSDictionary *headers = [NSHTTPCookie requestHeaderFieldsWithCookies:cookies];
+        for (NSString *key in headers) [request setValue:headers[key] forHTTPHeaderField:key];
+        NSURLSessionDataTask *task = [NSURLSession.sharedSession dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *rawResponse, NSError *requestError) {
+            OlympusDelegate *strongSelf = weakSelf; if (!strongSelf) return;
+            NSHTTPURLResponse *response = (NSHTTPURLResponse *)rawResponse;
+            if (requestError || response.statusCode < 200 || response.statusCode >= 300 || data.length == 0) {
+                NSString *serverMessage = data.length ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+                [strongSelf showDownloadResult:requestError.localizedDescription ?: serverMessage ?: @"El servidor no devolvió el archivo." error:YES];
+                return;
+            }
+            NSString *name = [strongSelf filenameFromResponse:response];
+            NSURL *destination = [strongSelf availableDownloadURLForName:name];
+            NSError *writeError = nil;
+            if (![data writeToURL:destination options:NSDataWritingAtomic error:&writeError]) {
+                [strongSelf showDownloadResult:writeError.localizedDescription ?: @"No se pudo guardar el archivo en Descargas." error:YES];
+                return;
+            }
+            [strongSelf showDownloadResult:[NSString stringWithFormat:@"Se guardó %@ en Descargas.", destination.lastPathComponent] error:NO];
+        }];
+        [task resume];
+    }];
+}
+
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    NSURL *url = navigationAction.request.URL;
+    if ([url.host isEqualToString:@"127.0.0.1"] && [url.path hasPrefix:@"/api/documents/"] && [url.path hasSuffix:@"/download"]) {
+        decisionHandler(WKNavigationActionPolicyCancel);
+        [self downloadFinalAtURL:url];
+        return;
+    }
+    decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+- (void)webView:(WKWebView *)webView decidePolicyForNavigationResponse:(WKNavigationResponse *)navigationResponse decisionHandler:(void (^)(WKNavigationResponsePolicy))decisionHandler {
+    NSString *mime = navigationResponse.response.MIMEType.lowercaseString ?: @"";
+    NSString *disposition = [(NSHTTPURLResponse *)navigationResponse.response allHeaderFields][@"Content-Disposition"];
+    BOOL officeFile = [mime containsString:@"officedocument"] || [mime containsString:@"ms-excel"] || [mime containsString:@"msword"];
+    BOOL attachment = [disposition.lowercaseString containsString:@"attachment"];
+    decisionHandler((officeFile || attachment) ? WKNavigationResponsePolicyDownload : WKNavigationResponsePolicyAllow);
+}
+
+- (void)webView:(WKWebView *)webView navigationAction:(WKNavigationAction *)navigationAction didBecomeDownload:(WKDownload *)download {
+    download.delegate = self;
+}
+
+- (void)webView:(WKWebView *)webView navigationResponse:(WKNavigationResponse *)navigationResponse didBecomeDownload:(WKDownload *)download {
+    download.delegate = self;
+}
+
+- (void)download:(WKDownload *)download decideDestinationUsingResponse:(NSURLResponse *)response suggestedFilename:(NSString *)suggestedFilename completionHandler:(void (^)(NSURL * _Nullable))completionHandler {
+    NSURL *downloads = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+    NSString *name = suggestedFilename.length ? suggestedFilename : @"Entrega final.docx";
+    NSURL *destination = [downloads URLByAppendingPathComponent:name];
+    if ([NSFileManager.defaultManager fileExistsAtPath:destination.path]) {
+        NSString *stem = name.stringByDeletingPathExtension, *extension = name.pathExtension;
+        NSDateFormatter *formatter = [NSDateFormatter new]; formatter.dateFormat = @"yyyy-MM-dd HH.mm.ss";
+        NSString *unique = [NSString stringWithFormat:@"%@ %@%@", stem, [formatter stringFromDate:NSDate.date], extension.length ? [@"." stringByAppendingString:extension] : @""];
+        destination = [downloads URLByAppendingPathComponent:unique];
+    }
+    completionHandler(destination);
+}
+
 - (void)emitEvent:(NSString *)name detail:(NSDictionary *)detail {
     NSData *jsonData = [NSJSONSerialization dataWithJSONObject:detail ?: @{} options:0 error:nil];
     NSString *json = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding] ?: @"{}";
@@ -457,6 +566,11 @@ static NSBox *Separator(void) {
 
 - (void)refresh:(id)sender {
     BOOL trusted = AXIsProcessTrusted();
+    if (trusted && !self.webView) {
+        [self showDashboard];
+        [self.window makeKeyAndOrderFront:nil];
+        return;
+    }
     BOOL claudeRunning = [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.anthropic.claudefordesktop"].count > 0;
     BOOL chatGPTRunning = [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.openai.codex"].count > 0;
     self.permissionValue.stringValue = trusted ? @"Habilitado ✓" : @"Pendiente";

@@ -36,8 +36,6 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
     NSUInteger maxRounds = MIN(MAX([payload[@"maxRounds"] unsignedIntegerValue], (NSUInteger)1), (NSUInteger)5);
     if (![@[@"docx", @"xlsx"] containsObject:extension]) { if (error) *error = CycleError(1, @"Formato de entrega inválido."); return nil; }
     if (!prompt.length || !professorPrompt.length) { if (error) *error = CycleError(2, @"Faltan los prompts de Claude o ChatGPT."); return nil; }
-    if (OlympusEditableControlCount(ClaudeBundle) == 0 || OlympusEditableControlCount(ChatGPTBundle) == 0) { if (error) *error = CycleError(3, @"Claude o ChatGPT no exponen un cuadro de mensaje. Abrí ambas aplicaciones e iniciá sesión."); return nil; }
-
     NSString *runDirectory = OlympusBeginRun(error); if (!runDirectory) return nil;
     NSURL *currentFile = nil; NSString *evaluation = @""; NSNumber *score = nil; BOOL chatStarted = NO;
     @try {

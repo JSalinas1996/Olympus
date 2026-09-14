@@ -22,7 +22,7 @@ app:
 	cp App/Info.plist $(APP)/Contents/Info.plist
 	clang -fobjc-arc -fblocks -framework AppKit -framework ApplicationServices -framework WebKit $(APP_SOURCES) -o $(APP_BIN)
 	xattr -cr $(APP)
-	codesign --force --sign - --identifier com.joaquinsalinas.olympus $(APP)
+	codesign --force --sign - --identifier com.joaquinsalinas.olympus --requirements '=designated => identifier "com.joaquinsalinas.olympus"' $(APP)
 	codesign --verify --deep --strict $(APP)
 
 install: app
