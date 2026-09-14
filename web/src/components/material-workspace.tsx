@@ -40,7 +40,7 @@ function statusLabel(document: StoredMaterial) {
 export function MaterialWorkspace({ subjectId, assignmentId, documents }: { subjectId: string; assignmentId: string; documents: StoredMaterial[] }) {
   const router = useRouter();
   const [uploads, setUploads] = useState<UploadItem[]>([]);
-  const uploading = useRef(false);
+  const queue = useRef<Promise<void>>(Promise.resolve());
 
   const setUpload = (key: string, patch: Partial<UploadItem>) => {
     setUploads(items => items.map(item => item.key === key ? { ...item, ...patch } : item));
@@ -63,13 +63,13 @@ export function MaterialWorkspace({ subjectId, assignmentId, documents }: { subj
     }
   };
 
-  const runQueue = async (items: UploadItem[]) => {
-    if (uploading.current) return;
-    uploading.current = true;
-    let completed = false;
-    for (const item of items) completed = (await sendFile(item)) || completed;
-    uploading.current = false;
-    if (completed) router.refresh();
+  const runQueue = (items: UploadItem[]) => {
+    const batch = async () => {
+      let completed = false;
+      for (const item of items) completed = (await sendFile(item)) || completed;
+      if (completed) router.refresh();
+    };
+    queue.current = queue.current.then(batch, batch);
   };
 
   const chooseFiles = (category: MaterialCategory, selected: FileList | null) => {
@@ -82,15 +82,11 @@ export function MaterialWorkspace({ subjectId, assignmentId, documents }: { subj
       file,
     }));
     setUploads(current => [...current, ...items]);
-    void runQueue(items);
+    runQueue(items);
   };
 
-  const retry = async (item: UploadItem) => {
-    if (uploading.current) return;
-    uploading.current = true;
-    const completed = await sendFile(item);
-    uploading.current = false;
-    if (completed) router.refresh();
+  const retry = (item: UploadItem) => {
+    runQueue([item]);
   };
 
   return <section className="rounded-2xl border border-slate-200 bg-white p-7 shadow-sm">
@@ -109,7 +105,7 @@ export function MaterialWorkspace({ subjectId, assignmentId, documents }: { subj
             </label>
           </div>
 
-          {categoryUploads.length > 0 && <div className="mt-4 space-y-2">{categoryUploads.map(item => <div key={item.key} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm"><span className="font-medium">{item.name}</span><div className="flex items-center gap-3"><span className={item.state === "done" ? "text-emerald-700" : item.state === "error" ? "text-red-700" : "text-amber-700"}>{item.state === "queued" ? "En cola" : item.state === "uploading" ? "Subiendo y procesando…" : item.state === "done" ? "Carga completa" : item.error}</span>{item.state === "error" && <button type="button" onClick={() => void retry(item)} className="font-semibold text-blue-700">Reintentar</button>}</div></div>)}</div>}
+          {categoryUploads.length > 0 && <div className="mt-4 space-y-2">{categoryUploads.map(item => <div key={item.key} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm"><span className="font-medium">{item.name}</span><div className="flex items-center gap-3"><span className={item.state === "done" ? "text-emerald-700" : item.state === "error" ? "text-red-700" : "text-amber-700"}>{item.state === "queued" ? "En cola" : item.state === "uploading" ? "Subiendo y procesando…" : item.state === "done" ? "Carga completa" : item.error}</span>{item.state === "error" && <button type="button" onClick={() => retry(item)} className="font-semibold text-blue-700">Reintentar</button>}</div></div>)}</div>}
 
           {stored.length > 0 && <div className="mt-4 space-y-3">{stored.map(document => <div key={document.id} className="rounded-xl border border-slate-200 bg-white p-4 text-sm">
             <div className="flex flex-wrap items-center justify-between gap-4"><div>{document.url ? <a href={document.url} target="_blank" rel="noreferrer" className="font-semibold text-blue-700">{document.name}</a> : <span className="font-semibold">{document.name}</span>}<p className={document.status === "ready" ? "mt-1 text-xs text-emerald-700" : document.status === "failed" ? "mt-1 text-xs text-red-700" : "mt-1 text-xs text-amber-700"}>{statusLabel(document)}</p></div><div className="flex items-center gap-3">{document.status !== "ready" && <form action={reprocessDocument}><input type="hidden" name="subjectId" value={subjectId}/><input type="hidden" name="assignmentId" value={assignmentId}/><input type="hidden" name="documentId" value={document.id}/><button className="font-semibold text-blue-700">Reintentar</button></form>}<form action={deleteDocument}><input type="hidden" name="subjectId" value={subjectId}/><input type="hidden" name="assignmentId" value={assignmentId}/><input type="hidden" name="documentId" value={document.id}/><button className="font-semibold text-red-700">Eliminar</button></form></div></div>
