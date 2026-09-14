@@ -452,7 +452,7 @@ Confirm the start button accepts Word only, Excel only, and both selected. Run a
 
 Open the existing Personas Jurídicas test TP and verify its legacy structured text appears under **Información anterior**, its previous single Word final remains downloadable, and no existing Drive folder or document was moved or deleted during migration.
 
-- [ ] **Step 7: Mark completed plan items and commit documentation**
+- [x] **Step 7: Mark completed plan items and commit documentation**
 
 Update this plan’s checkboxes to reflect executed steps, then run:
 
@@ -461,7 +461,7 @@ git add desktop-poc/README.md docs/superpowers/plans/2026-09-14-unified-material
 git commit -m "Document unified Olympus workflow"
 ```
 
-- [ ] **Step 8: Push and verify repository state**
+- [x] **Step 8: Push and verify repository state**
 
 Run: `git push origin main && git status --short`
 
