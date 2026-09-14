@@ -7,11 +7,11 @@ import { extractDocument } from "@/lib/documents/extract";
 
 const folderMimeType = "application/vnd.google-apps.folder";
 const documentFolderByKind = {
-  source: "01 - Información y fuentes",
-  assignment: "02 - Enunciado y situación problemática",
-  rubric: "04 - Rúbrica de evaluación",
-  precedent_work: "06 - Modelos y correcciones anteriores",
-  precedent_correction: "06 - Modelos y correcciones anteriores",
+  source: "02 - Módulos teóricos",
+  assignment: "01 - Enunciado, consignas y rúbrica",
+  rubric: "01 - Enunciado, consignas y rúbrica",
+  precedent_work: "03 - Modelos anteriores",
+  precedent_correction: "03 - Modelos anteriores",
 } as const;
 
 async function processDocumentRecord(documentId: string, file: File) {
@@ -111,13 +111,22 @@ export async function uploadAssignmentDocument(input: {
     name: input.file.name, mime_type: input.file.type || "application/octet-stream", size_bytes: input.file.size,
     drive_file_id: response.data.id, drive_web_url: response.data.webViewLink, processing_status: "processing",
   }).select("id").single();
-  if (insertError) throw insertError;
+  if (insertError) {
+    await drive.files.delete({ fileId: response.data.id }).catch(() => undefined);
+    throw insertError;
+  }
   try {
     await processDocumentRecord(document.id, input.file);
   } catch (processingError) {
     const message = processingError instanceof Error ? processingError.message : "No se pudo procesar el archivo.";
     await supabase.from("documents").update({ processing_status: "failed", processing_error: message.slice(0, 1000) }).eq("id", document.id);
   }
+  const { data: processed, error: processedError } = await supabase.from("documents")
+    .select("id,name,processing_status")
+    .eq("id", document.id)
+    .single();
+  if (processedError) throw processedError;
+  return processed;
 }
 
 export async function reprocessDriveDocument(documentId: string) {
