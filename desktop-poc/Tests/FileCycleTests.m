@@ -1,6 +1,7 @@
 #import <Foundation/Foundation.h>
 #import "../App/FileCycle.h"
 #import "../App/CycleCoordinator.h"
+#import "../App/AIModelController.h"
 
 static void Require(BOOL condition, NSString *message) {
     if (!condition) { fprintf(stderr, "FAIL: %s\n", message.UTF8String); exit(1); }
@@ -22,6 +23,10 @@ int main(void) {
         Require([OlympusValidatedFormats(@[@"xlsx", @"docx", @"xlsx"], &formatError) isEqual:@[@"docx", @"xlsx"]], @"normaliza Word y Excel");
         Require(OlympusValidatedFormats(@[], &formatError) == nil, @"rechaza una selección vacía");
         Require(OlympusValidatedFormats(@[@"pdf"], &formatError) == nil, @"rechaza formatos ajenos");
+        Require([OlympusNormalizeModelLabel(@"  Ópus   5 ") isEqualToString:@"opus 5"], @"normaliza etiqueta de modelo");
+        Require(OlympusModelLabelMatches(@"Modelo: Opus 5 Medio 1.5×", @"Opus 5", @"medium"), @"reconoce modelo y esfuerzo");
+        Require(!OlympusModelLabelMatches(@"Modelo: Opus 5 Máx", @"Opus 5", @"medium"), @"rechaza esfuerzo distinto");
+        Require(!OlympusModelLabelMatches(@"Modelo: Sonnet 5 Medio", @"Opus 5", @"medium"), @"rechaza modelo distinto");
 
         NSString *folder = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
@@ -38,6 +43,11 @@ int main(void) {
         Require(Run(@"/usr/bin/textutil", @[@"-convert", @"docx", @"-output", docx, plain]), @"crea fixture docx");
         NSString *wordText = OlympusExtractOfficeFile([NSURL fileURLWithPath:docx], &error);
         Require([wordText containsString:@"contenido académico verificable"], @"extrae docx");
+        NSString *docxWithImage = [folder stringByAppendingPathComponent:@"with-image.docx"];
+        NSString *zipScript = @"import sys,zipfile\nwith zipfile.ZipFile(sys.argv[1],'w') as z:\n z.writestr('word/document.xml','<document>Informe técnico válido con contenido suficiente</document>')\n z.writestr('word/media/logo.png',b'logo')";
+        Require(Run(@"/opt/homebrew/bin/python3", @[@"-c", zipScript, docxWithImage]), @"crea fixture Word con imagen");
+        Require(OlympusDocxContainsEmbeddedImage([NSURL fileURLWithPath:docxWithImage]), @"reconoce imagen incorporada");
+        Require(!OlympusDocxContainsEmbeddedImage([NSURL fileURLWithPath:docx]), @"rechaza Word sin imagen");
         [[NSFileManager defaultManager] removeItemAtPath:folder error:nil];
         puts("FileCycleTests: OK");
     }

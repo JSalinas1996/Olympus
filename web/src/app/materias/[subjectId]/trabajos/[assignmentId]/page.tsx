@@ -2,25 +2,35 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MaterialWorkspace } from "@/components/material-workspace";
 import { NativeCycle } from "@/components/native-cycle";
+import { StudyReport } from "@/components/study-report";
 import { materialCategoryForKind } from "@/lib/materials";
 import { buildReviewContext } from "@/lib/review-context";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { saveAssignmentSettings } from "./actions";
+import { AIModelFields } from "@/components/ai-model-fields";
+import { DEFAULT_AI_SETTINGS, resolveAISettings } from "@/lib/ai/settings";
 
 export default async function AssignmentPage({ params }: { params: Promise<{ subjectId: string; assignmentId: string }> }) {
   const { subjectId, assignmentId } = await params;
   const supabase = await createSupabaseServerClient();
-  const [{ data: subject }, { data: assignment }, { data: documents }, { data: rubricItems }, { data: finalEvaluations }] = await Promise.all([
-    supabase.from("subjects").select("name,student_prompt,professor_prompt").eq("id", subjectId).single(),
+  const [{ data: subject }, { data: assignment }, { data: documents }, { data: rubricItems }, { data: finalEvaluations }, { data: general }] = await Promise.all([
+    supabase.from("subjects").select("name,student_prompt,professor_prompt,study_report_prompt,claude_model,claude_effort,chatgpt_model,chatgpt_effort").eq("id", subjectId).single(),
     supabase.from("assignments").select("*").eq("id", assignmentId).eq("subject_id", subjectId).single(),
     supabase.from("documents").select("id,name,kind,mime_type,drive_web_url,size_bytes,processing_status,processing_error,page_count,teacher_feedback,document_chunks(page_number,position,content)").eq("assignment_id", assignmentId).order("created_at", { ascending: false }),
     supabase.from("rubric_items").select("description").eq("assignment_id", assignmentId).eq("position", 0).limit(1),
     supabase.from("evaluations").select("feedback,estimated_score").eq("assignment_id", assignmentId).eq("estimated_score", 10).order("created_at", { ascending: false }).limit(1),
+    supabase.from("user_ai_settings").select("development_prompt,correction_prompt,study_report_prompt,claude_model,claude_effort,chatgpt_model,chatgpt_effort,logo_name,logo_drive_web_url").maybeSingle(),
   ]);
   if (!subject || !assignment) notFound();
 
   const finalDeliveries = (documents ?? []).filter(document => document.kind === "generated");
-  const materials = (documents ?? []).filter(document => document.kind !== "generated");
+  const studyReports = (documents ?? []).filter(document => document.kind === "study_report");
+  const materials = (documents ?? []).filter(document => !["generated", "study_report"].includes(document.kind));
+  const effectiveSettings = resolveAISettings({
+    general: { developmentPrompt: general?.development_prompt ?? DEFAULT_AI_SETTINGS.developmentPrompt, correctionPrompt: general?.correction_prompt ?? DEFAULT_AI_SETTINGS.correctionPrompt, studyReportPrompt: general?.study_report_prompt ?? DEFAULT_AI_SETTINGS.studyReportPrompt, claudeModel: general?.claude_model || DEFAULT_AI_SETTINGS.claudeModel, claudeEffort: general?.claude_effort || DEFAULT_AI_SETTINGS.claudeEffort, chatgptModel: general?.chatgpt_model || DEFAULT_AI_SETTINGS.chatgptModel, chatgptEffort: general?.chatgpt_effort || DEFAULT_AI_SETTINGS.chatgptEffort },
+    subject: { developmentPrompt: subject.student_prompt, correctionPrompt: subject.professor_prompt, studyReportPrompt: subject.study_report_prompt, claudeModel: subject.claude_model, claudeEffort: subject.claude_effort, chatgptModel: subject.chatgpt_model, chatgptEffort: subject.chatgpt_effort },
+    assignment: { developmentPrompt: assignment.student_prompt_override, correctionPrompt: assignment.professor_prompt_override, studyReportPrompt: assignment.study_report_prompt_override, claudeModel: assignment.claude_model_override, claudeEffort: assignment.claude_effort_override, chatgptModel: assignment.chatgpt_model_override, chatgptEffort: assignment.chatgpt_effort_override },
+  });
   const legacySections = [
     ["Información del proyecto", assignment.project_information],
     ["Enunciado y situación problemática", assignment.problem_statement],
@@ -61,14 +71,16 @@ export default async function AssignmentPage({ params }: { params: Promise<{ sub
           <textarea name="manualNotes" defaultValue={assignment.manual_notes ?? ""} rows={5} className="mt-4 w-full rounded-xl border border-slate-200 p-3 text-sm" placeholder="Agregá aquí cualquier indicación que no figure en los archivos…"/>
         </details>
         <details className="rounded-xl border border-slate-200 p-4">
-          <summary className="cursor-pointer font-semibold">Prompts de Claude y ChatGPT</summary>
-          <div className="mt-4 grid gap-5 md:grid-cols-2"><label><span className="text-sm font-semibold">Prompt de Claude</span><textarea name="studentPromptOverride" defaultValue={assignment.student_prompt_override ?? subject.student_prompt ?? ""} rows={6} className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm"/></label><label><span className="text-sm font-semibold">Prompt de ChatGPT</span><textarea name="professorPromptOverride" defaultValue={assignment.professor_prompt_override ?? subject.professor_prompt ?? ""} rows={6} className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm"/></label></div>
+          <summary className="cursor-pointer font-semibold">Prompts y modelos de IA</summary>
+          <div className="mt-4 grid gap-5 md:grid-cols-2"><label><span className="text-sm font-semibold">Prompt de Claude</span><textarea name="studentPromptOverride" defaultValue={assignment.student_prompt_override ?? ""} placeholder={`Heredado de ${effectiveSettings.developmentPrompt.origin}: ${effectiveSettings.developmentPrompt.value.slice(0, 180)}`} rows={6} className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm"/></label><label><span className="text-sm font-semibold">Prompt de ChatGPT</span><textarea name="professorPromptOverride" defaultValue={assignment.professor_prompt_override ?? ""} placeholder={`Heredado de ${effectiveSettings.correctionPrompt.origin}: ${effectiveSettings.correctionPrompt.value.slice(0, 180)}`} rows={6} className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm"/></label><label className="md:col-span-2"><span className="text-sm font-semibold">Prompt del informe técnico</span><textarea name="studyReportPromptOverride" defaultValue={assignment.study_report_prompt_override ?? ""} placeholder={`Heredado de ${effectiveSettings.studyReportPrompt.origin}: ${effectiveSettings.studyReportPrompt.value.slice(0, 180)}`} rows={6} className="mt-2 w-full rounded-xl border border-slate-200 p-3 text-sm"/></label></div>
+          <div className="mt-5 grid gap-4 md:grid-cols-2"><AIModelFields provider="claude" prefix="claude" model={assignment.claude_model_override} effort={assignment.claude_effort_override} allowInherit inheritedLabel={`materia (${effectiveSettings.claudeModel.value || "sin configurar"})`}/><AIModelFields provider="chatgpt" prefix="chatgpt" model={assignment.chatgpt_model_override} effort={assignment.chatgpt_effort_override} allowInherit inheritedLabel={`materia (${effectiveSettings.chatgptModel.value || "sin configurar"})`}/></div>
         </details>
-        <button className="rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">Guardar notas y prompts</button>
+        <button className="rounded-xl border border-blue-300 bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-800">Guardar configuración del trabajo</button>
       </form>
       {legacySections.length > 0 && <details className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4"><summary className="cursor-pointer font-semibold text-amber-950">Información anterior</summary><p className="mt-2 text-xs text-amber-800">Se conserva y continúa formando parte del contexto de las IA.</p><pre className="mt-3 whitespace-pre-wrap font-sans text-sm text-amber-950">{legacyText}</pre></details>}
     </section>
 
-    <NativeCycle assignmentId={assignmentId} studentPrompt={assignment.student_prompt_override ?? subject.student_prompt ?? ""} professorPrompt={assignment.professor_prompt_override ?? subject.professor_prompt ?? ""} reviewContext={reviewContext} hasUsableMaterial={reviewDocuments.length > 0 || Boolean((assignment.manual_notes ?? "").trim()) || Boolean(legacyText)} failedBriefNames={failedBriefNames} finalDeliveries={finalDeliveries.map(delivery => ({ id: delivery.id, name: delivery.name, mimeType: delivery.mime_type, url: delivery.drive_web_url, evaluation: finalEvaluations?.[0]?.feedback ?? "" }))}/>
+    <NativeCycle assignmentId={assignmentId} studentPrompt={effectiveSettings.developmentPrompt.value} professorPrompt={effectiveSettings.correctionPrompt.value} reviewContext={reviewContext} hasUsableMaterial={reviewDocuments.length > 0 || Boolean((assignment.manual_notes ?? "").trim()) || Boolean(legacyText)} failedBriefNames={failedBriefNames} finalDeliveries={finalDeliveries.map(delivery => ({ id: delivery.id, name: delivery.name, mimeType: delivery.mime_type, url: delivery.drive_web_url, evaluation: finalEvaluations?.[0]?.feedback ?? "" }))} claudeModel={{ model: effectiveSettings.claudeModel.value, effort: effectiveSettings.claudeEffort.value, origin: effectiveSettings.claudeModel.origin }} chatgptModel={{ model: effectiveSettings.chatgptModel.value, effort: effectiveSettings.chatgptEffort.value, origin: effectiveSettings.chatgptModel.origin }}/>
+    <StudyReport assignmentId={assignmentId} reportPrompt={effectiveSettings.studyReportPrompt.value} reportPromptOrigin={effectiveSettings.studyReportPrompt.origin} reviewContext={reviewContext} claudeModel={{ model: effectiveSettings.claudeModel.value, effort: effectiveSettings.claudeEffort.value, origin: effectiveSettings.claudeModel.origin }} logo={general?.logo_name ? { name: general.logo_name, url: general.logo_drive_web_url } : null} finalDeliveries={finalDeliveries.map(file => ({ id: file.id, name: file.name, url: file.drive_web_url }))} reports={studyReports.map(file => ({ id: file.id, name: file.name, url: file.drive_web_url }))}/>
   </div></main>;
 }

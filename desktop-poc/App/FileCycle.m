@@ -119,6 +119,19 @@ NSString *OlympusExtractOfficeFile(NSURL *file, NSError **error) {
     return trimmed;
 }
 
+BOOL OlympusDocxContainsEmbeddedImage(NSURL *file) {
+    if (![file.pathExtension.lowercaseString isEqualToString:@"docx"]) return NO;
+    NSTask *task = [NSTask new]; task.executableURL = [NSURL fileURLWithPath:@"/usr/bin/unzip"];
+    task.arguments = @[@"-Z1", file.path]; NSPipe *pipe = [NSPipe pipe]; task.standardOutput = pipe; task.standardError = [NSPipe pipe];
+    if (![task launchAndReturnError:nil]) return NO; [task waitUntilExit];
+    if (task.terminationStatus != 0) return NO;
+    NSString *listing = [[NSString alloc] initWithData:[pipe.fileHandleForReading readDataToEndOfFile] encoding:NSUTF8StringEncoding] ?: @"";
+    for (NSString *line in [listing componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+        if ([line hasPrefix:@"word/media/"] && line.length > @"word/media/".length) return YES;
+    }
+    return NO;
+}
+
 void OlympusCleanRun(NSString *runDirectory) {
     if (runDirectory.length) [[NSFileManager defaultManager] removeItemAtPath:runDirectory error:nil];
 }

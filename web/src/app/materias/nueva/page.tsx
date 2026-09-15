@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, BookPlus } from "lucide-react";
 import { createSubject } from "./actions";
 import { CreateSubjectButton } from "./submit-button";
+import { AIModelFields } from "@/components/ai-model-fields";
 
 const inputClass = "w-full rounded-xl border border-slate-200 px-4 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-50";
 
@@ -19,6 +20,8 @@ export default async function NewSubjectPage({ searchParams }: { searchParams: P
         </div>
         <label className="block"><span className="mb-2 block text-sm font-semibold">Prompt de Claude · Alumno</span><textarea name="studentPrompt" rows={7} className={`p-4 ${inputClass}`} placeholder="Indicaciones generales para desarrollar los trabajos…" /></label>
         <label className="block"><span className="mb-2 block text-sm font-semibold">Prompt de ChatGPT · Catedrático</span><textarea name="professorPrompt" rows={7} className={`p-4 ${inputClass}`} placeholder="Criterios generales para corregir los trabajos…" /></label>
+        <label className="block"><span className="mb-2 block text-sm font-semibold">Prompt de informe técnico · Claude</span><textarea name="studyReportPrompt" rows={7} className={`p-4 ${inputClass}`} placeholder="Dejalo vacío para usar la configuración general…" /></label>
+        <div className="grid gap-4 sm:grid-cols-2"><AIModelFields provider="claude" prefix="claude" allowInherit inheritedLabel="configuración general"/><AIModelFields provider="chatgpt" prefix="chatgpt" allowInherit inheritedLabel="configuración general"/></div>
         {error && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p>}
         <div className="flex justify-end gap-3"><Link href="/" className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold">Cancelar</Link><CreateSubjectButton /></div>
       </form>

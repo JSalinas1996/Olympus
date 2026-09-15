@@ -2,8 +2,10 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <WebKit/WebKit.h>
 #import "AIApplication.h"
+#import "AIModelController.h"
 #import "CycleCoordinator.h"
 #import "FileCycle.h"
+#import "StudyReportCoordinator.h"
 
 @interface OlympusDelegate : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKDownloadDelegate>
 @property NSWindow *window;
@@ -529,10 +531,55 @@ completionHandler:(void (^)(NSArray<NSURL *> * _Nullable URLs))completionHandler
         [[NSWorkspace sharedWorkspace] openApplicationAtURL:[NSURL fileURLWithPath:@"/Applications/Claude.app"] configuration:configuration completionHandler:nil];
         NSURL *chatGPT = [[NSWorkspace sharedWorkspace] URLForApplicationWithBundleIdentifier:@"com.openai.codex"];
         if (chatGPT) [[NSWorkspace sharedWorkspace] openApplicationAtURL:chatGPT configuration:configuration completionHandler:nil];
+    } else if ([payload[@"action"] isEqual:@"check-models"]) {
+        if (self.cycleRunning) { [self emitEvent:@"olympus-model-check-result" detail:@{ @"stage": @"fallido", @"status": @"Ya hay una ejecución de IA en curso." }]; return; }
+        self.cycleRunning = YES; NSDictionary *claudeModel = [payload[@"claudeModel"] isKindOfClass:NSDictionary.class] ? payload[@"claudeModel"] : @{}; NSDictionary *chatGPTModel = [payload[@"chatgptModel"] isKindOfClass:NSDictionary.class] ? payload[@"chatgptModel"] : @{};
+        __weak OlympusDelegate *weakSelf = self;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSError *modelError = nil; BOOL claudeOK = OlympusEnsureModelSelection(@"com.anthropic.claudefordesktop", claudeModel, &modelError);
+            BOOL chatGPTOK = claudeOK && OlympusEnsureModelSelection(@"com.openai.codex", chatGPTModel, &modelError);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                OlympusDelegate *strongSelf = weakSelf; if (!strongSelf) return; strongSelf.cycleRunning = NO;
+                [strongSelf emitEvent:@"olympus-model-check-result" detail:@{ @"stage": chatGPTOK ? @"modelos listos" : @"configuración requerida", @"status": chatGPTOK ? @"Claude y ChatGPT coinciden con la configuración de Olympus." : modelError.localizedDescription ?: @"No se pudieron comprobar los modelos." }];
+                [strongSelf.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
+            });
+        });
     } else if ([payload[@"action"] isEqual:@"cancel-file-cycle"]) {
         self.cycleCancelled = YES;
-    } else if ([payload[@"action"] isEqual:@"cycle-persisted"]) {
+    } else if ([payload[@"action"] isEqual:@"cancel-study-report"]) {
+        self.cycleCancelled = YES;
+    } else if ([payload[@"action"] isEqual:@"cycle-persisted"] || [payload[@"action"] isEqual:@"study-report-persisted"]) {
         OlympusCleanRun(self.activeRunDirectory); self.activeRunDirectory = nil;
+    } else if ([payload[@"action"] isEqual:@"start-study-report"] && [payload[@"prompt"] isKindOfClass:NSString.class]) {
+        if (self.cycleRunning) {
+            [self emitEvent:@"olympus-study-report-failed" detail:@{ @"stage": @"fallido", @"status": @"Ya hay una ejecución de IA en curso." }];
+            return;
+        }
+        if (self.activeRunDirectory.length) {
+            [self emitEvent:@"olympus-study-report-failed" detail:@{ @"stage": @"guardado pendiente", @"status": @"Hay un archivo pendiente de guardar. Reintentá ese guardado antes de generar el informe." }];
+            return;
+        }
+        self.cycleCancelled = NO; self.cycleRunning = YES; NSDictionary *reportPayload = [payload copy];
+        __weak OlympusDelegate *weakSelf = self;
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            NSError *reportError = nil;
+            NSDictionary *result = OlympusRunStudyReport(reportPayload, ^(NSDictionary *detail) {
+                dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf emitEvent:@"olympus-study-report-progress" detail:detail]; });
+            }, ^BOOL{ return weakSelf.cycleCancelled; }, &reportError);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                OlympusDelegate *strongSelf = weakSelf; if (!strongSelf) return; strongSelf.cycleRunning = NO;
+                if (!result) {
+                    NSString *stage = [reportError.domain isEqualToString:@"OlympusAIModel"] ? @"configuración requerida" : @"fallido";
+                    NSDictionary *detail = @{ @"stage": stage, @"status": reportError.localizedDescription ?: @"La generación del informe se detuvo." };
+                    if ([reportError.domain isEqualToString:@"OlympusAIModel"]) [strongSelf emitEvent:@"olympus-model-configuration-required" detail:detail];
+                    [strongSelf emitEvent:@"olympus-study-report-failed" detail:detail];
+                } else {
+                    strongSelf.activeRunDirectory = result[@"runDirectory"];
+                    [strongSelf emitEvent:@"olympus-study-report-complete" detail:@{ @"file": result[@"file"] ?: @{} }];
+                }
+                [strongSelf.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
+            });
+        });
     } else if ([payload[@"action"] isEqual:@"start-file-cycle"] && [payload[@"prompt"] isKindOfClass:NSString.class]) {
         if (self.cycleRunning) {
             [self emitEvent:@"olympus-cycle-failed" detail:@{ @"stage": @"fallido", @"status": @"Ya hay un ciclo en curso." }];
@@ -556,7 +603,10 @@ completionHandler:(void (^)(NSArray<NSURL *> * _Nullable URLs))completionHandler
                 OlympusDelegate *strongSelf = weakSelf; if (!strongSelf) return;
                 strongSelf.cycleRunning = NO;
                 if (!result) {
-                    [strongSelf emitEvent:@"olympus-cycle-failed" detail:@{ @"stage": @"fallido", @"status": cycleError.localizedDescription ?: @"El ciclo se detuvo sin publicar ningún archivo." }];
+                    NSString *stage = [cycleError.domain isEqualToString:@"OlympusAIModel"] ? @"configuración requerida" : @"fallido";
+                    NSDictionary *detail = @{ @"stage": stage, @"status": cycleError.localizedDescription ?: @"El ciclo se detuvo sin publicar ningún archivo." };
+                    if ([cycleError.domain isEqualToString:@"OlympusAIModel"]) [strongSelf emitEvent:@"olympus-model-configuration-required" detail:detail];
+                    [strongSelf emitEvent:@"olympus-cycle-failed" detail:detail];
                 } else if ([result[@"approved"] boolValue]) {
                     strongSelf.activeRunDirectory = result[@"runDirectory"];
                     NSMutableDictionary *publicResult = [result mutableCopy]; [publicResult removeObjectForKey:@"runDirectory"]; [publicResult removeObjectForKey:@"approved"];

@@ -8,6 +8,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { assignmentId } = await params; const data = await request.formData();
     const files = data.getAll("files").filter((value): value is File => value instanceof File);
     const evaluation = String(data.get("evaluation") || ""); const rounds = Number(data.get("rounds") || 1);
+    let configurationSnapshot: unknown = {};
+    const rawSnapshot = String(data.get("configurationSnapshot") || "{}");
+    if (rawSnapshot.length <= 10000) { try { const parsed = JSON.parse(rawSnapshot); if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) configurationSnapshot = parsed; } catch {} }
     let formats: unknown = [];
     try { formats = JSON.parse(String(data.get("formats") || "[]")); } catch { return NextResponse.json({ error: "La selección de formatos es inválida." }, { status: 400 }); }
     if (!files.length) return NextResponse.json({ error: "Faltan los archivos finales." }, { status: 400 });
@@ -19,7 +22,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!assignment?.drive_folder_id) return NextResponse.json({ error: "El TP no tiene carpeta de Drive." }, { status: 404 });
     const documents = await uploadFinalDeliveries({ subjectId: assignment.subject_id, assignmentId, folderId: assignment.drive_folder_id, files: normalized });
     if (documents.length !== normalized.length) throw new Error("No se registraron todos los archivos finales.");
-    const { data: run, error: runError } = await supabase.from("ai_runs").insert({ assignment_id: assignmentId, status: "completed", current_round: Math.max(1, rounds), current_step: "published", idempotency_key: crypto.randomUUID() }).select("id").single();
+    const { data: run, error: runError } = await supabase.from("ai_runs").insert({ assignment_id: assignmentId, status: "completed", current_round: Math.max(1, rounds), current_step: "published", run_type: "assignment_cycle", configuration_snapshot: configurationSnapshot, idempotency_key: crypto.randomUUID() }).select("id").single();
     if (runError) throw runError;
     const { data: latest } = await supabase.from("versions").select("version_number").eq("assignment_id", assignmentId).order("version_number", { ascending: false }).limit(1).maybeSingle();
     const { data: version, error: versionError } = await supabase.from("versions").insert({ assignment_id: assignmentId, run_id: run.id, version_number: (latest?.version_number ?? 0) + 1, author: "claude", drive_file_id: documents[0].drive_file_id, content: { files: documents.map(document => ({ name: document.name, mimeType: document.mime_type, size: document.size_bytes, driveUrl: document.drive_web_url })) } }).select("id").single();

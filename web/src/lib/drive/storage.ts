@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 import { createGoogleOAuthClient, decryptTokens } from "@/lib/drive/oauth";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { extractDocument } from "@/lib/documents/extract";
+import { validateLogoFile } from "@/lib/logo";
 
 const folderMimeType = "application/vnd.google-apps.folder";
 const documentFolderByKind = {
@@ -157,7 +158,7 @@ export async function deleteDriveDocument(documentId: string) {
 
 export async function downloadDriveDocument(documentId: string) {
   const supabase = await createSupabaseServerClient();
-  const { data: document, error: documentError } = await supabase.from("documents").select("name,mime_type,drive_file_id").eq("id", documentId).eq("kind", "generated").single();
+  const { data: document, error: documentError } = await supabase.from("documents").select("name,mime_type,drive_file_id").eq("id", documentId).in("kind", ["generated", "study_report"]).single();
   if (documentError || !document?.drive_file_id) throw documentError ?? new Error("La entrega final no está disponible.");
   const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens");
   if (error) throw error;
@@ -165,6 +166,14 @@ export async function downloadDriveDocument(documentId: string) {
   const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
   const response = await google.drive({ version: "v3", auth }).files.get({ fileId: document.drive_file_id, alt: "media" }, { responseType: "arraybuffer" });
   return { name: document.name, mimeType: document.mime_type || "application/octet-stream", bytes: Buffer.from(response.data as ArrayBuffer) };
+}
+
+export async function extractFinalDeliveryText(documentId: string) {
+  const file = await downloadDriveDocument(documentId);
+  const pages = await extractDocument(new File([file.bytes], file.name, { type: file.mimeType }));
+  const text = pages.map(page => `[Sección ${page.page}]\n${page.text.trim()}`).filter(value => value.trim()).join("\n\n").trim();
+  if (!text) throw new Error(`No se pudo extraer contenido de ${file.name}.`);
+  return { name: file.name, text };
 }
 
 export async function uploadFinalDeliveries(input: { subjectId: string; assignmentId: string; folderId: string; files: File[] }) {
@@ -218,4 +227,110 @@ export async function uploadFinalDeliveries(input: { subjectId: string; assignme
     for (const item of previous ?? []) if (item.drive_file_id) await drive.files.delete({ fileId: item.drive_file_id }).catch(() => undefined);
   }
   return documents;
+}
+
+export async function uploadGeneralLogo(file: File) {
+  validateLogoFile(file.name, file.size, file.type);
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Sesión requerida.");
+  const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens");
+  if (error) throw error;
+  if (!encryptedTokens) throw new Error("Google Drive no está conectado.");
+  const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
+  const drive = google.drive({ version: "v3", auth });
+  const rootId = await findOrCreateFolder(drive, "Olympus");
+  const settingsFolderId = await findOrCreateFolder(drive, "Configuración", rootId);
+  const logoFolderId = await findOrCreateFolder(drive, "Logo", settingsFolderId);
+  const { data: previous } = await supabase.from("user_ai_settings").select("logo_drive_file_id").maybeSingle();
+  const bytes = Buffer.from(await file.arrayBuffer());
+  const response = await drive.files.create({
+    requestBody: { name: file.name, parents: [logoFolderId] },
+    media: { mimeType: file.type, body: Readable.from(bytes) },
+    fields: "id,webViewLink",
+  });
+  if (!response.data.id) throw new Error("Drive no devolvió el identificador del logo.");
+  const { error: settingsError } = await supabase.from("user_ai_settings").upsert({
+    owner_id: user.id,
+    logo_name: file.name,
+    logo_mime_type: file.type,
+    logo_size_bytes: file.size,
+    logo_drive_file_id: response.data.id,
+    logo_drive_web_url: response.data.webViewLink,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "owner_id" });
+  if (settingsError) {
+    await drive.files.delete({ fileId: response.data.id }).catch(() => undefined);
+    throw settingsError;
+  }
+  if (previous?.logo_drive_file_id && previous.logo_drive_file_id !== response.data.id) {
+    await drive.files.delete({ fileId: previous.logo_drive_file_id }).catch(() => undefined);
+  }
+  return { name: file.name, mimeType: file.type, size: file.size, driveFileId: response.data.id, driveUrl: response.data.webViewLink };
+}
+
+export async function downloadGeneralLogo() {
+  const supabase = await createSupabaseServerClient();
+  const { data: settings, error: settingsError } = await supabase.from("user_ai_settings").select("logo_name,logo_mime_type,logo_drive_file_id").maybeSingle();
+  if (settingsError) throw settingsError;
+  if (!settings?.logo_drive_file_id || !settings.logo_name) throw new Error("No hay un logo configurado.");
+  const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens");
+  if (error) throw error;
+  if (!encryptedTokens) throw new Error("Google Drive no está conectado.");
+  const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
+  const response = await google.drive({ version: "v3", auth }).files.get({ fileId: settings.logo_drive_file_id, alt: "media" }, { responseType: "arraybuffer" });
+  return { name: settings.logo_name, mimeType: settings.logo_mime_type || "application/octet-stream", bytes: Buffer.from(response.data as ArrayBuffer) };
+}
+
+export async function deleteGeneralLogo() {
+  const supabase = await createSupabaseServerClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) throw new Error("Sesión requerida.");
+  const { data: settings, error: settingsError } = await supabase.from("user_ai_settings").select("logo_drive_file_id").maybeSingle();
+  if (settingsError) throw settingsError;
+  const { error: updateError } = await supabase.from("user_ai_settings").update({
+    logo_name: null, logo_mime_type: null, logo_size_bytes: null, logo_drive_file_id: null, logo_drive_web_url: null,
+    updated_at: new Date().toISOString(),
+  }).eq("owner_id", user.id);
+  if (updateError) throw updateError;
+  if (!settings?.logo_drive_file_id) return;
+  const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens");
+  if (error || !encryptedTokens) return;
+  const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
+  await google.drive({ version: "v3", auth }).files.delete({ fileId: settings.logo_drive_file_id }).catch(() => undefined);
+}
+
+export async function uploadStudyReport(input: { subjectId: string; assignmentId: string; folderId: string; file: File }) {
+  const supabase = await createSupabaseServerClient();
+  const { data: encryptedTokens, error } = await supabase.rpc("get_my_google_drive_tokens");
+  if (error) throw error;
+  if (!encryptedTokens) throw new Error("Google Drive no está conectado.");
+  const auth = createGoogleOAuthClient(); auth.setCredentials(decryptTokens(encryptedTokens));
+  const drive = google.drive({ version: "v3", auth });
+  const reportFolderId = await findOrCreateFolder(drive, "Informe técnico de estudio", input.folderId);
+  const { data: previous } = await supabase.from("documents").select("id,drive_file_id").eq("assignment_id", input.assignmentId).eq("kind", "study_report");
+  const bytes = Buffer.from(await input.file.arrayBuffer());
+  const response = await drive.files.create({
+    requestBody: { name: input.file.name, parents: [reportFolderId] },
+    media: { mimeType: input.file.type, body: Readable.from(bytes) },
+    fields: "id,webViewLink",
+  });
+  if (!response.data.id) throw new Error("Drive no devolvió el identificador del informe.");
+  const { data: document, error: insertError } = await supabase.from("documents").insert({
+    subject_id: input.subjectId, assignment_id: input.assignmentId, kind: "study_report", name: input.file.name,
+    mime_type: input.file.type, size_bytes: input.file.size, drive_file_id: response.data.id,
+    drive_web_url: response.data.webViewLink, processing_status: "ready",
+  }).select("id,name,mime_type,size_bytes,drive_file_id,drive_web_url").single();
+  if (insertError) { await drive.files.delete({ fileId: response.data.id }).catch(() => undefined); throw insertError; }
+  const previousIds = (previous ?? []).map(item => item.id);
+  if (previousIds.length) {
+    const { error: deleteError } = await supabase.from("documents").delete().in("id", previousIds);
+    if (deleteError) {
+      await supabase.from("documents").delete().eq("id", document.id);
+      await drive.files.delete({ fileId: response.data.id }).catch(() => undefined);
+      throw deleteError;
+    }
+    for (const item of previous ?? []) if (item.drive_file_id) await drive.files.delete({ fileId: item.drive_file_id }).catch(() => undefined);
+  }
+  return document;
 }

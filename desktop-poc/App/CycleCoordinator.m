@@ -1,6 +1,7 @@
 #import "CycleCoordinator.h"
 #import "AIApplication.h"
 #import "FileCycle.h"
+#import "AIModelController.h"
 
 static NSString * const ClaudeBundle = @"com.anthropic.claudefordesktop";
 static NSString * const ChatGPTBundle = @"com.openai.codex";
@@ -74,6 +75,8 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
     NSString *prompt = [payload[@"prompt"] isKindOfClass:NSString.class] ? payload[@"prompt"] : @"";
     NSString *professorPrompt = [payload[@"professorPrompt"] isKindOfClass:NSString.class] ? payload[@"professorPrompt"] : @"";
     NSString *reviewContext = [payload[@"reviewContext"] isKindOfClass:NSString.class] ? payload[@"reviewContext"] : @"";
+    NSDictionary *claudeSelection = [payload[@"claudeModel"] isKindOfClass:NSDictionary.class] ? payload[@"claudeModel"] : @{};
+    NSDictionary *chatGPTSelection = [payload[@"chatgptModel"] isKindOfClass:NSDictionary.class] ? payload[@"chatgptModel"] : @{};
     id rawFormats = payload[@"formats"];
     if (!rawFormats && [payload[@"format"] isKindOfClass:NSString.class]) rawFormats = @[payload[@"format"]];
     NSArray<NSString *> *formats = OlympusValidatedFormats(rawFormats, error);
@@ -92,6 +95,9 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
         NSString *claudePrompt = [prompt stringByAppendingString:StrictFileInstruction(formats, 1)];
         for (NSUInteger round = 1; round <= maxRounds; round++) {
             if (Cancelled(cancelled, error)) { OlympusCleanRun(runDirectory); return nil; }
+            progress(@{ @"stage": @"comprobando modelo", @"round": @(round), @"status": @"Olympus está comprobando el modelo de Claude…" });
+            NSError *stepError = nil;
+            if (!OlympusEnsureModelSelection(ClaudeBundle, claudeSelection, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
             progress(@{ @"stage": round == 1 ? @"desarrollando" : @"revisando", @"round": @(round), @"status": round == 1 ? @"Claude está desarrollando todos los archivos solicitados…" : @"Claude está aplicando la corrección a la entrega completa…" });
 
             NSDictionary *downloadSnapshot = OlympusSnapshotDownloads();
@@ -99,7 +105,6 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
             for (NSString *format in formats) previousButtons[format] = @(round == 1 ? 0 : OlympusDownloadButtonCount(ClaudeBundle, format));
             NSUInteger previousOfficeButtons = formats.count > 1 ? (round == 1 ? 0 : OlympusOfficeDownloadButtonCount(ClaudeBundle)) : 0;
 
-            NSError *stepError = nil;
             BOOL sent = round == 1 ? OlympusSendPromptInNewChat(ClaudeBundle, claudePrompt, &stepError) : OlympusSendPromptInActiveChat(ClaudeBundle, claudePrompt, &stepError);
             if (!sent) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
             if (formats.count > 1 && !OlympusWaitAndPressNewOfficeDownloads(ClaudeBundle, previousOfficeButtons, formats.count, 480, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
@@ -128,6 +133,8 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
             NSString *marker = [NSString stringWithFormat:@"OLYMPUS_EVALUACION_RONDA_%lu_%@", (unsigned long)round, NSUUID.UUID.UUIDString];
             NSString *evaluationPrompt = [NSString stringWithFormat:@"%@\n\n%@\n\nActuá como catedrático y corregí esta entrega completa sobre 10 según las consignas, la rúbrica y el material. Evaluá conjuntamente todos los archivos solicitados: si uno falta o no corresponde a su formato, no puede aprobarse. Verificá datos, cálculos, afirmaciones y citas. No inventes fuentes. Enumerá todos los cambios concretos necesarios, indicando el archivo al que corresponde cada uno. Cerrá obligatoriamente con una línea independiente de formato exacto CALIFICACIÓN: X/10.\n\nCONTEXTO ACADÉMICO DEL TP:\n%@\n\nCONTENIDO EXTRAÍDO DE LA ENTREGA DE CLAUDE:\n%@", marker, professorPrompt, reviewContext, [extractedSections componentsJoinedByString:@"\n\n"]];
             NSString *fileNames = JoinedFileNames(currentFiles);
+            progress(@{ @"stage": @"comprobando modelo", @"round": @(round), @"fileName": fileNames, @"status": @"Olympus está comprobando el modelo de ChatGPT…" });
+            if (!OlympusEnsureModelSelection(ChatGPTBundle, chatGPTSelection, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
             progress(@{ @"stage": @"corrigiendo", @"round": @(round), @"fileName": fileNames, @"status": @"ChatGPT está corrigiendo la entrega completa como catedrático…" });
             BOOL evaluationSent = chatStarted ? OlympusSendPromptInActiveChat(ChatGPTBundle, evaluationPrompt, &stepError) : OlympusSendPromptInNewChat(ChatGPTBundle, evaluationPrompt, &stepError);
             if (!evaluationSent) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }

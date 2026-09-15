@@ -16,15 +16,18 @@ La aplicación inicia el servidor local en `http://127.0.0.1:43127`. Sus registr
 
 ## Uso
 
-1. Creá una materia. Olympus crea cuatro trabajos prácticos y su estructura dentro de `Olympus/<Materia>/` en Google Drive.
-2. Entrá a un TP y cargá sus archivos en uno de los tres grupos: **Enunciado + consignas + rúbrica**, **Módulos teóricos** o **Modelos anteriores**. Podés seleccionar varios archivos a la vez. Se admiten PDF, Word, Excel, imágenes, escaneos y texto; Olympus los guarda en la carpeta correspondiente de Drive y extrae el contenido para las IA.
-3. Si subís un modelo anterior, escribí debajo las correcciones que hizo el docente. Olympus usa ese conjunto como criterio orientativo, sin copiar la respuesta. El enunciado y la rúbrica actuales siempre tienen prioridad.
-4. En **Configuración del trabajo**, agregá notas manuales opcionales y revisá los prompts de Claude y ChatGPT heredados de la materia.
-5. Marcá Word, Excel o ambos según lo que pida el docente y pulsá **Iniciar Claude → ChatGPT → Claude**.
-6. Claude crea todos los archivos seleccionados. ChatGPT corrige la entrega completa con una sola calificación y Olympus devuelve todos los cambios a Claude hasta obtener `CALIFICACIÓN: 10/10` o completar tres rondas.
-7. Sólo el conjunto final aprobado se guarda en `Olympus/<Materia>/<TP>/Entrega final`. Desde el TP podés descargar cada archivo o abrirlo en Drive.
+1. Entrá una vez a **Configuración**. Guardá los prompts generales de desarrollo, corrección e informe; elegí los modelos y niveles de esfuerzo; y cargá el logo general.
+2. Creá una materia. Olympus crea cuatro trabajos prácticos y su estructura dentro de `Olympus/<Materia>/` en Google Drive. La materia hereda la configuración general y permite reemplazar cualquiera de esos valores.
+3. Entrá a un TP y cargá sus archivos en uno de los tres grupos: **Enunciado + consignas + rúbrica**, **Módulos teóricos** o **Modelos anteriores**. Podés seleccionar varios archivos a la vez. Se admiten PDF, Word, Excel, imágenes, escaneos y texto; Olympus los guarda en la carpeta correspondiente de Drive y extrae el contenido para las IA.
+4. Si subís un modelo anterior, escribí debajo las correcciones que hizo el docente. Olympus usa ese conjunto como criterio orientativo, sin copiar la respuesta. El enunciado y la rúbrica actuales siempre tienen prioridad.
+5. En **Configuración del trabajo**, agregá notas manuales opcionales o definí excepciones de prompts y modelos sólo para ese TP.
+6. Pulsá **Comprobar modelos**. Olympus selecciona y verifica en las aplicaciones nativas el modelo y el esfuerzo efectivos sin enviar un prompt.
+7. Marcá Word, Excel o ambos según lo que pida el docente y pulsá **Iniciar Claude → ChatGPT → Claude**.
+8. Claude crea todos los archivos seleccionados. ChatGPT corrige la entrega completa con una sola calificación y Olympus devuelve todos los cambios a Claude hasta obtener `CALIFICACIÓN: 10/10` o completar tres rondas.
+9. Sólo el conjunto final aprobado se guarda en `Olympus/<Materia>/<TP>/Entrega final`. Desde el TP podés descargar cada archivo o abrirlo en Drive.
+10. Cuando consideres cerrado el TP, pulsá **Generar informe técnico**. Claude recibe la entrega final, el contexto académico, tu prompt de informe y el logo. Olympus exige un Word editable con el logo incorporado y conserva únicamente el informe vigente en Drive.
 
-Las versiones intermedias sólo existen en `~/Library/Application Support/Olympus Campus/Runs/` durante el ciclo. Se eliminan al publicar, cancelar o fallar. Si Drive no acepta una entrega ya aprobada, Olympus conserva temporalmente el conjunto y muestra **Reintentar guardado en Drive**. Dejá abiertas las aplicaciones nativas de Claude y ChatGPT, con tus suscripciones iniciadas, durante toda la ejecución.
+Las versiones intermedias sólo existen en `~/Library/Application Support/Olympus Campus/Runs/` durante el ciclo. Se eliminan al publicar, cancelar o fallar. Si Drive no acepta una entrega ya aprobada, Olympus conserva temporalmente el conjunto y muestra **Reintentar guardado en Drive**. Dejá abiertas las aplicaciones nativas de Claude y ChatGPT, con tus suscripciones iniciadas, durante toda la ejecución. Como ambas aplicaciones pueden cambiar su interfaz, usá **Comprobar modelos** después de una actualización para detectar cualquier ajuste necesario antes de iniciar un trabajo.
 
 ## Verificación
 

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { deleteDriveDocument, reprocessDriveDocument } from "@/lib/drive/storage";
+import { effortFromForm, modelFromForm } from "@/lib/ai/form-values";
 
 const assignmentSettingsSchema = z.object({
   subjectId: z.string().uuid(),
@@ -11,6 +12,7 @@ const assignmentSettingsSchema = z.object({
   manualNotes: z.string().max(100000),
   studentPromptOverride: z.string().max(30000),
   professorPromptOverride: z.string().max(30000),
+  studyReportPromptOverride: z.string().max(30000),
 });
 
 const modelFeedbackSchema = z.object({
@@ -23,12 +25,24 @@ const modelFeedbackSchema = z.object({
 export async function saveAssignmentSettings(formData: FormData) {
   const parsed = assignmentSettingsSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) redirect("/?error=invalid-assignment-settings");
-  const { subjectId, assignmentId, manualNotes, studentPromptOverride, professorPromptOverride } = parsed.data;
+  const { subjectId, assignmentId, manualNotes, studentPromptOverride, professorPromptOverride, studyReportPromptOverride } = parsed.data;
+  let models;
+  try {
+    models = {
+      claudeModel: modelFromForm(formData, "claude", false), claudeEffort: effortFromForm(formData, "claude", "claude", false),
+      chatgptModel: modelFromForm(formData, "chatgpt", false), chatgptEffort: effortFromForm(formData, "chatgpt", "chatgpt", false),
+    };
+  } catch { redirect(`/?error=invalid-assignment-model-settings`); }
   const supabase = await createSupabaseServerClient();
   const { error } = await supabase.from("assignments").update({
     manual_notes: manualNotes,
     student_prompt_override: studentPromptOverride || null,
     professor_prompt_override: professorPromptOverride || null,
+    study_report_prompt_override: studyReportPromptOverride || null,
+    claude_model_override: models.claudeModel || null,
+    claude_effort_override: models.claudeEffort || null,
+    chatgpt_model_override: models.chatgptModel || null,
+    chatgpt_effort_override: models.chatgptEffort || null,
     updated_at: new Date().toISOString(),
   }).eq("id", assignmentId).eq("subject_id", subjectId);
   if (error) redirect("/?error=save-assignment-settings");

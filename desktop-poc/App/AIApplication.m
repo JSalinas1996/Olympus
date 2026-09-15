@@ -306,6 +306,37 @@ BOOL OlympusSendPromptInActiveChat(NSString *bundleIdentifier, NSString *prompt,
     return SendPrompt(application, prompt, error);
 }
 
+static BOOL ApplicationContainsLabel(NSRunningApplication *application, NSString *needle) {
+    AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
+    NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root]; BOOL found = NO;
+    NSString *normalizedNeedle = needle.lowercaseString;
+    for (NSUInteger cursor = 0; cursor < queue.count && cursor < 12000 && !found; cursor++) {
+        AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor];
+        found = [ElementLabel(element) containsString:normalizedNeedle];
+        [queue addObjectsFromArray:AXChildren(element)];
+    }
+    CFRelease(root); return found;
+}
+
+BOOL OlympusSendPromptWithAttachmentInNewChat(NSString *bundleIdentifier, NSString *prompt, NSURL *attachment, NSError **error) {
+    NSRunningApplication *application = RaiseApplication(bundleIdentifier, error); if (!application) return NO;
+    if (!PressNewChat(application)) { if (error) *error = AIError(3, @"No pude abrir y confirmar una conversación nueva."); return NO; }
+    AXUIElementRef composer = CopyBestComposer(application);
+    if (!composer) { if (error) *error = AIError(6, @"No encontré el cuadro de mensaje para adjuntar el logo."); return NO; }
+    AXUIElementSetAttributeValue(composer, kAXFocusedAttribute, kCFBooleanTrue);
+    ClickFrameCenterForPID(composer, application.processIdentifier); CFRelease(composer);
+    NSPasteboard *pasteboard = NSPasteboard.generalPasteboard; NSArray<NSPasteboardItem *> *savedItems = CopyPasteboardItems(pasteboard);
+    [pasteboard clearContents]; [pasteboard writeObjects:@[attachment]];
+    PostKeyToPID(application.processIdentifier, 9, kCGEventFlagMaskCommand); // Command-V
+    BOOL attached = NO;
+    for (NSUInteger attempt = 0; attempt < 12 && !attached; attempt++) {
+        [NSThread sleepForTimeInterval:0.5]; attached = ApplicationContainsLabel(application, attachment.lastPathComponent);
+    }
+    [pasteboard clearContents]; if (savedItems.count) [pasteboard writeObjects:savedItems];
+    if (!attached) { if (error) *error = AIError(7, @"Claude no confirmó que el logo estuviera adjunto."); return NO; }
+    return SendPrompt(application, prompt, error);
+}
+
 static NSString *Normalized(NSString *value) {
     NSArray *parts = [value componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
     return [[parts filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSString *part, NSDictionary *bindings) { return part.length > 0; }]] componentsJoinedByString:@" "];

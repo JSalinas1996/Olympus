@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Bot, Clock3, FileCheck2, Files, Grid2X2, LayoutList, LibraryBig, Plus, Search, Sparkles } from "lucide-react";
+import { BookOpen, Bot, Clock3, FileCheck2, Files, Grid2X2, LayoutList, LibraryBig, Plus, Search, Settings2, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 import { type Subject } from "@/lib/demo-data";
 import Link from "next/link";
@@ -85,6 +85,7 @@ export function Dashboard({ initialSubjects }: { initialSubjects: Subject[] }) {
             <a className="flex items-center gap-3 rounded-xl bg-blue-50 px-3 py-3 text-sm font-semibold text-blue-700" href="#"><LibraryBig className="size-5" />Materias</a>
             <a className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50" href="#"><Clock3 className="size-5" />Actividad reciente</a>
             <a className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50" href="#"><Sparkles className="size-5" />Ejecuciones de IA</a>
+            <Link className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-600 hover:bg-slate-50" href="/configuracion"><Settings2 className="size-5" />Configuración</Link>
           </nav>
           <div className="mt-8 rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Mi carrera</p><p className="mt-3 text-3xl font-semibold">{initialSubjects.length}</p><p className="text-sm text-slate-500">materias cargadas</p>

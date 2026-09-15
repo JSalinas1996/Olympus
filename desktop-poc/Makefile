@@ -2,10 +2,10 @@ BIN := .build/olympus-native-probe
 SRC := Sources/main.m
 APP := /tmp/OlympusCampusBuild.app
 APP_BIN := $(APP)/Contents/MacOS/Olympus
-APP_SOURCES := App/main.m App/AIApplication.m App/FileCycle.m App/CycleCoordinator.m
+APP_SOURCES := App/main.m App/AIApplication.m App/AIModelController.m App/FileCycle.m App/CycleCoordinator.m App/StudyReportCoordinator.m
 EXTRACTOR := .build/olympus-document-extractor
 
-.PHONY: build probe app test open clean
+.PHONY: build probe app install test open clean
 
 build:
 	mkdir -p .build
@@ -31,7 +31,7 @@ install: app
 
 test:
 	mkdir -p .build
-	clang -fobjc-arc -fblocks -framework AppKit -framework ApplicationServices Tests/FileCycleTests.m App/AIApplication.m App/FileCycle.m App/CycleCoordinator.m -o .build/file-cycle-tests
+	clang -fobjc-arc -fblocks -framework AppKit -framework ApplicationServices Tests/FileCycleTests.m App/AIApplication.m App/AIModelController.m App/FileCycle.m App/CycleCoordinator.m App/StudyReportCoordinator.m -o .build/file-cycle-tests
 	.build/file-cycle-tests
 
 open: app
