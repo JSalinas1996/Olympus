@@ -1,25 +1,52 @@
 import "server-only";
 import mammoth from "mammoth";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { createWorker, OEM } from "tesseract.js";
 import spanishData from "@tesseract.js-data/spa";
 import { extractWorkbook } from "./extract-office";
+import { resolveOcrCachePath, resolveOcrWorkerPath } from "./ocr-config";
 
 const execFileAsync = promisify(execFile);
 export type ExtractedPage = { page: number; text: string; method: "embedded" | "ocr" | "text" };
 type PDFPage = ExtractedPage & { imagePath?: string };
 
-async function recognizeImages(images: { page: number; path: string }[]): Promise<ExtractedPage[]> {
-  const worker = await createWorker("spa", OEM.LSTM_ONLY, { langPath: spanishData.langPath, gzip: spanishData.gzip, cacheMethod: "none", logger: () => undefined });
-  try {
+type OcrWorker = Awaited<ReturnType<typeof createWorker>>;
+let ocrWorkerPromise: Promise<OcrWorker> | null = null;
+let ocrQueue: Promise<void> = Promise.resolve();
+
+function getOcrWorker() {
+  if (!ocrWorkerPromise) {
+    ocrWorkerPromise = (async () => {
+      const cachePath = resolveOcrCachePath();
+      await mkdir(cachePath, { recursive: true });
+      return createWorker("spa", OEM.LSTM_ONLY, {
+        langPath: spanishData.langPath,
+        gzip: spanishData.gzip,
+        workerPath: resolveOcrWorkerPath(),
+        cachePath,
+        logger: () => undefined,
+      });
+    })().catch(error => {
+      ocrWorkerPromise = null;
+      throw error;
+    });
+  }
+  return ocrWorkerPromise;
+}
+
+function recognizeImages(images: { page: number; path: string }[]): Promise<ExtractedPage[]> {
+  const job = ocrQueue.then(async () => {
+    const worker = await getOcrWorker();
     const pages = [];
     for (const image of images) { const result = await worker.recognize(image.path); pages.push({ page: image.page, text: result.data.text.trim(), method: "ocr" as const }); }
     return pages;
-  } finally { await worker.terminate(); }
+  });
+  ocrQueue = job.then(() => undefined, () => undefined);
+  return job;
 }
 
 function extension(name: string) { return path.extname(name).toLowerCase(); }
