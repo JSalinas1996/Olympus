@@ -56,12 +56,12 @@ static NSString *JoinedFileNames(NSArray<NSDictionary *> *files) {
     return [names componentsJoinedByString:@", "];
 }
 
-static NSString *StrictFileInstruction(NSArray<NSString *> *formats, NSUInteger round) {
+NSString *OlympusAutomaticDeliveryInstruction(NSArray<NSString *> *formats, NSUInteger round) {
     NSMutableArray<NSString *> *requirements = [NSMutableArray array];
     for (NSString *format in formats) [requirements addObject:[NSString stringWithFormat:@"exactamente un archivo %@", FormatName(format)]];
     NSString *list = [requirements componentsJoinedByString:formats.count > 1 ? @" y " : @""];
     NSString *opening = formats.count > 1 ? @"Generá los archivos solicitados, completos y listos para descargar. Deben constituir juntos una única entrega coherente y cubrir todo lo pedido por el docente." : @"Generá el archivo solicitado, completo y listo para descargar. Debe cubrir todo lo pedido por el docente.";
-    return [NSString stringWithFormat:@"\n\nINSTRUCCIÓN DE ENTREGA DE OLYMPUS — RONDA %lu:\n%@ Tu respuesta debe incluir %@, sin archivos adicionales. No sustituyas ningún archivo por una explicación en texto. Verificá que cada archivo abra correctamente y conserve su formato durante las revisiones.", (unsigned long)round, opening, list];
+    return [NSString stringWithFormat:@"\n\nINSTRUCCIÓN DE EJECUCIÓN AUTOMÁTICA DE OLYMPUS — RONDA %lu:\nEste ciclo ya fue autorizado por el usuario. No pidas confirmaciones ni esperes un OK intermedio, aunque el prompt base indique que debés esperar, parar o mostrar primero un análisis: ejecutá internamente esas fases en el orden indicado y avanzá de inmediato hasta generar la entrega. Esta regla elimina solamente las pausas intermedias; no autoriza a inventar datos, cálculos, normas ni fuentes. Si falta un dato imprescindible, dejá constancia precisa dentro de la entrega y resolvé todo lo que permitan los materiales.\n%@ Tu respuesta debe incluir %@, sin archivos adicionales. No sustituyas ningún archivo por una explicación en texto. Verificá que cada archivo abra correctamente y conserve su formato durante las revisiones.", (unsigned long)round, opening, list];
 }
 
 static NSDictionary *PublicFile(NSURL *currentFile, NSURL *download, NSString *extension, NSError **error) {
@@ -92,7 +92,7 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
     BOOL chatStarted = NO;
 
     @try {
-        NSString *claudePrompt = [prompt stringByAppendingString:StrictFileInstruction(formats, 1)];
+        NSString *claudePrompt = [prompt stringByAppendingString:OlympusAutomaticDeliveryInstruction(formats, 1)];
         for (NSUInteger round = 1; round <= maxRounds; round++) {
             if (Cancelled(cancelled, error)) { OlympusCleanRun(runDirectory); return nil; }
             progress(@{ @"stage": @"comprobando modelo", @"round": @(round), @"status": @"Olympus está comprobando el modelo de Claude…" });
@@ -148,7 +148,7 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
                 return @{ @"approved": @YES, @"rounds": @(round), @"formats": formats, @"files": currentFiles, @"fileName": fileNames, @"evaluation": evaluation, @"score": @10, @"runDirectory": runDirectory };
             }
             if (round < maxRounds) {
-                claudePrompt = [NSString stringWithFormat:@"Aplicá todas las correcciones del catedrático a la entrega de la ronda anterior y generá un conjunto completo que la reemplace. Corregí coordinadamente todos los archivos, aun cuando una observación mencione sólo uno. Conservá únicamente datos, cálculos, normas y citas verificables.\n\nCORRECCIÓN COMPLETA DE CHATGPT:\n%@%@", evaluation, StrictFileInstruction(formats, round + 1)];
+                claudePrompt = [NSString stringWithFormat:@"Aplicá todas las correcciones del catedrático a la entrega de la ronda anterior y generá un conjunto completo que la reemplace. Corregí coordinadamente todos los archivos, aun cuando una observación mencione sólo uno. Conservá únicamente datos, cálculos, normas y citas verificables.\n\nCORRECCIÓN COMPLETA DE CHATGPT:\n%@%@", evaluation, OlympusAutomaticDeliveryInstruction(formats, round + 1)];
             }
         }
         OlympusCleanRun(runDirectory);

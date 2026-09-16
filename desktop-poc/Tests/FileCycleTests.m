@@ -23,6 +23,13 @@ int main(void) {
         Require([OlympusValidatedFormats(@[@"xlsx", @"docx", @"xlsx"], &formatError) isEqual:@[@"docx", @"xlsx"]], @"normaliza Word y Excel");
         Require(OlympusValidatedFormats(@[], &formatError) == nil, @"rechaza una selección vacía");
         Require(OlympusValidatedFormats(@[@"pdf"], &formatError) == nil, @"rechaza formatos ajenos");
+        NSString *automaticWord = OlympusAutomaticDeliveryInstruction(@[@"docx"], 1);
+        Require([automaticWord containsString:@"No pidas confirmaciones ni esperes un OK intermedio"], @"el ciclo automático no se detiene por un OK");
+        Require([automaticWord containsString:@"exactamente un archivo Word (.docx)"], @"exige el Word seleccionado");
+        Require([automaticWord containsString:@"no autoriza a inventar"], @"mantiene la prohibición de inventar");
+        NSString *automaticBundle = OlympusAutomaticDeliveryInstruction(@[@"docx", @"xlsx"], 2);
+        Require([automaticBundle containsString:@"exactamente un archivo Word (.docx) y exactamente un archivo Excel (.xlsx)"], @"exige ambos formatos");
+        Require([automaticBundle containsString:@"RONDA 2"], @"identifica la ronda de corrección");
         Require([OlympusNormalizeModelLabel(@"  Ópus   5 ") isEqualToString:@"opus 5"], @"normaliza etiqueta de modelo");
         Require(OlympusModelLabelMatches(@"Modelo: Opus 5 Medio 1.5×", @"Opus 5", @"medium"), @"reconoce modelo y esfuerzo");
         Require(!OlympusModelLabelMatches(@"Modelo: Opus 5 Máx", @"Opus 5", @"medium"), @"rechaza esfuerzo distinto");
