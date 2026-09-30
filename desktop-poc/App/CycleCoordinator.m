@@ -109,7 +109,19 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
 
             BOOL sent = OlympusSendPromptInActiveChat(ClaudeBundle, claudePrompt, &stepError);
             if (!sent) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
-            if (formats.count > 1 && !OlympusWaitAndPressNewOfficeDownloads(ClaudeBundle, previousOfficeButtons, formats.count, 480, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
+            if (formats.count > 1 && !OlympusWaitAndPressNewOfficeDownloads(ClaudeBundle, previousOfficeButtons, formats.count, 240, &stepError)) {
+                progress(@{ @"stage": @"completando entrega", @"round": @(round), @"status": @"Claude no publicó los dos archivos correctamente. Olympus le está pidiendo automáticamente una entrega completa…" });
+                // Ignore any partial download from the first response and ask
+                // Claude for a clean replacement containing every requested
+                // format.  This keeps an incomplete bundle away from ChatGPT.
+                downloadSnapshot = OlympusSnapshotDownloads();
+                previousOfficeButtons = OlympusOfficeDownloadButtonCount(ClaudeBundle);
+                NSMutableArray<NSString *> *retryFormats = [NSMutableArray array];
+                for (NSString *format in formats) [retryFormats addObject:FormatName(format)];
+                NSString *retryPrompt = [NSString stringWithFormat:@"La respuesta anterior no presentó correctamente todos los archivos descargables. Regenerá ahora la entrega completa: %@. Publicá cada archivo como descarga independiente, con su extensión real, sin omitir ninguno y sin responder sólo con una explicación.%@", [retryFormats componentsJoinedByString:@" y "], OlympusAutomaticDeliveryInstruction(formats, round)];
+                stepError = nil;
+                if (!OlympusSendPromptInActiveChat(ClaudeBundle, retryPrompt, &stepError) || !OlympusWaitAndPressNewOfficeDownloads(ClaudeBundle, previousOfficeButtons, formats.count, 240, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
+            }
 
             NSMutableArray<NSDictionary *> *roundFiles = [NSMutableArray array];
             NSMutableArray<NSString *> *extractedSections = [NSMutableArray array];

@@ -321,6 +321,7 @@ BOOL OlympusSendPromptInActiveChat(NSString *bundleIdentifier, NSString *prompt,
 }
 
 static BOOL ApplicationContainsLabel(NSRunningApplication *application, NSString *needle) {
+    if (!application || !needle.length) return NO;
     AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
     NSMutableArray *queue = [NSMutableArray arrayWithObject:(__bridge id)root]; BOOL found = NO;
     NSString *normalizedNeedle = needle.lowercaseString;
@@ -413,7 +414,12 @@ static NSArray *CopyDownloadButtons(NSString *bundleIdentifier, NSString *extens
         AXUIElementRef element = (__bridge AXUIElementRef)queue[cursor]; NSString *role = AXString(element, kAXRoleAttribute);
         if ([role isEqualToString:(NSString *)kAXButtonRole] || [role isEqualToString:@"AXLink"]) {
             NSString *label = ElementLabel(element); BOOL fileLabel = [label containsString:needle];
-            BOOL downloadLabel = [label containsString:@"descargar archivo"] || [label containsString:@"descargar y abrir"] || [label containsString:@"download file"];
+            // Claude now renders generated files as a labelled card whose
+            // actual button is exposed to Accessibility simply as
+            // "Descargar"/"Download".  Counting only the old
+            // "Descargar archivo" label made Olympus wait forever even though
+            // the file was already visible.
+            BOOL downloadLabel = OlympusIsDownloadActionLabel(label);
             BOOL excluded = [label containsString:@"actualizar"] || [label containsString:@"update"] || [label containsString:@"install"];
             if ((fileLabel || downloadLabel) && !excluded) [matches addObject:(__bridge id)element];
         }
@@ -424,6 +430,12 @@ static NSArray *CopyDownloadButtons(NSString *bundleIdentifier, NSString *extens
 
 NSUInteger OlympusDownloadButtonCount(NSString *bundleIdentifier, NSString *extension) {
     return CopyDownloadButtons(bundleIdentifier, extension).count;
+}
+
+BOOL OlympusIsDownloadActionLabel(NSString *label) {
+    NSString *value = [label.lowercaseString stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    if ([value containsString:@"actualizar"] || [value containsString:@"update"] || [value containsString:@"install"]) return NO;
+    return [value isEqualToString:@"descargar"] || [value isEqualToString:@"download"] || [value hasPrefix:@"descargar "] || [value hasPrefix:@"download "];
 }
 
 static NSString *ApplicationLimitMessage(NSString *bundleIdentifier);
@@ -437,7 +449,7 @@ static NSArray *CopyOfficeDownloadButtons(NSString *bundleIdentifier) {
         if ([role isEqualToString:(NSString *)kAXButtonRole] || [role isEqualToString:@"AXLink"]) {
             NSString *label = ElementLabel(element);
             BOOL officeLabel = [label containsString:@".docx"] || [label containsString:@".xlsx"];
-            BOOL downloadLabel = [label containsString:@"descargar archivo"] || [label containsString:@"descargar y abrir"] || [label containsString:@"download file"];
+            BOOL downloadLabel = OlympusIsDownloadActionLabel(label);
             BOOL excluded = [label containsString:@"actualizar"] || [label containsString:@"update"] || [label containsString:@"install"];
             if ((officeLabel || downloadLabel) && !excluded) [matches addObject:(__bridge id)element];
         }
@@ -452,19 +464,30 @@ NSUInteger OlympusOfficeDownloadButtonCount(NSString *bundleIdentifier) {
 
 BOOL OlympusWaitAndPressNewOfficeDownloads(NSString *bundleIdentifier, NSUInteger previousCount, NSUInteger expectedCount, NSTimeInterval timeout, NSError **error) {
     NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout]; NSDate *limitCheckAt = [NSDate dateWithTimeIntervalSinceNow:6.0];
+    NSUInteger pressed = 0, completedPolls = 0;
     while (deadline.timeIntervalSinceNow > 0) {
         NSArray *buttons = CopyOfficeDownloadButtons(bundleIdentifier);
-        if (buttons.count >= previousCount + expectedCount) {
-            NSRange newRange = NSMakeRange(buttons.count - expectedCount, expectedCount);
+        if (buttons.count > previousCount + pressed) {
+            NSUInteger available = MIN(buttons.count - previousCount - pressed, expectedCount - pressed);
+            NSRange newRange = NSMakeRange(previousCount + pressed, available);
             for (id item in [buttons subarrayWithRange:newRange]) {
                 if (!ClickElement((__bridge AXUIElementRef)item)) {
                     if (error) *error = AIError(8, @"Olympus encontró la entrega de Claude pero no pudo descargar todos los archivos.");
                     return NO;
                 }
+                pressed++;
                 [NSThread sleepForTimeInterval:0.7];
             }
-            return YES;
+            if (pressed >= expectedCount) return YES;
         }
+        // Once Claude says it finished, give the UI a short grace period for
+        // file cards to render.  If a file is missing, return promptly so the
+        // coordinator can ask Claude to regenerate the complete delivery
+        // instead of making the user wait eight minutes.
+        if (ApplicationContainsLabel([NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject, @"claude terminó la respuesta") ||
+            ApplicationContainsLabel([NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject, @"claude finished responding")) completedPolls++;
+        else completedPolls = 0;
+        if (completedPolls >= 4) break;
         if (limitCheckAt.timeIntervalSinceNow <= 0) {
             NSString *limit = ApplicationLimitMessage(bundleIdentifier);
             if (limit.length) {
@@ -474,7 +497,7 @@ BOOL OlympusWaitAndPressNewOfficeDownloads(NSString *bundleIdentifier, NSUIntege
         }
         [NSThread sleepForTimeInterval:3.0];
     }
-    if (error) *error = AIError(6, @"Claude no mostró todos los archivos Word/Excel descargables dentro del tiempo esperado.");
+    if (error) *error = AIError(6, [NSString stringWithFormat:@"Claude publicó %lu de %lu archivos Word/Excel descargables.", (unsigned long)pressed, (unsigned long)expectedCount]);
     return NO;
 }
 
@@ -495,13 +518,17 @@ static NSString *ApplicationLimitMessage(NSString *bundleIdentifier) {
 }
 
 BOOL OlympusWaitAndPressNewDownload(NSString *bundleIdentifier, NSString *extension, NSUInteger previousCount, NSTimeInterval timeout, NSError **error) {
-    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout]; NSDate *limitCheckAt = [NSDate dateWithTimeIntervalSinceNow:6.0];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout]; NSDate *limitCheckAt = [NSDate dateWithTimeIntervalSinceNow:6.0]; NSUInteger completedPolls = 0;
     while (deadline.timeIntervalSinceNow > 0) {
         NSArray *buttons = CopyDownloadButtons(bundleIdentifier, extension);
         if (buttons.count > previousCount) {
             AXUIElementRef button = (__bridge AXUIElementRef)buttons.lastObject;
             if (ClickElement(button)) return YES;
         }
+        if (ApplicationContainsLabel([NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject, @"claude terminó la respuesta") ||
+            ApplicationContainsLabel([NSRunningApplication runningApplicationsWithBundleIdentifier:bundleIdentifier].firstObject, @"claude finished responding")) completedPolls++;
+        else completedPolls = 0;
+        if (completedPolls >= 4) break;
         if (limitCheckAt.timeIntervalSinceNow <= 0) {
             NSString *limit = ApplicationLimitMessage(bundleIdentifier);
             if (limit.length) {

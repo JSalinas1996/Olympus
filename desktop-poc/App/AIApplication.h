@@ -13,5 +13,6 @@ NSUInteger OlympusDownloadButtonCount(NSString *bundleIdentifier, NSString *exte
 BOOL OlympusWaitAndPressNewDownload(NSString *bundleIdentifier, NSString *extension, NSUInteger previousCount, NSTimeInterval timeout, NSError **error);
 NSUInteger OlympusOfficeDownloadButtonCount(NSString *bundleIdentifier);
 BOOL OlympusWaitAndPressNewOfficeDownloads(NSString *bundleIdentifier, NSUInteger previousCount, NSUInteger expectedCount, NSTimeInterval timeout, NSError **error);
+BOOL OlympusIsDownloadActionLabel(NSString *label);
 
 NS_ASSUME_NONNULL_END

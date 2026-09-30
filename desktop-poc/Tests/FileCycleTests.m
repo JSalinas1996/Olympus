@@ -1,4 +1,5 @@
 #import <Foundation/Foundation.h>
+#import "../App/AIApplication.h"
 #import "../App/FileCycle.h"
 #import "../App/CycleCoordinator.h"
 #import "../App/AIModelController.h"
@@ -42,6 +43,9 @@ int main(void) {
         Require(!OlympusModelFamilyMatchesLabel(@"GPT-6 Astra Alto", @"gpt"), @"GPT base no absorbe una familia con nombre");
         Require(OlympusCompareModelVersions(@"Opus 5.10", @"Opus 5.5", @"opus") == NSOrderedDescending, @"ordena versiones por componentes numéricos");
         Require([OlympusBestModelLabel(@[@"Opus 5 Medio 1.5×", @"Sonnet 8 Alto", @"Opus 5.5 Alto 2×", @"Opus 5.10 Alto"], @"opus") isEqualToString:@"Opus 5.10 Alto"], @"elige la última versión disponible dentro de la familia");
+        Require(OlympusIsDownloadActionLabel(@"Descargar"), @"reconoce el nuevo botón genérico de descarga de Claude");
+        Require(OlympusIsDownloadActionLabel(@"Download file"), @"reconoce la descarga en inglés");
+        Require(!OlympusIsDownloadActionLabel(@"Actualizar Claude"), @"no confunde una actualización con un archivo");
 
         NSString *folder = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];
