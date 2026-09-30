@@ -84,6 +84,35 @@ export async function createSubjectDriveStructure(subjectId: string, subjectName
   return { rootId, subjectFolderId };
 }
 
+export async function ensureAssignmentDriveFolder(assignmentId: string) {
+  const supabase = await createSupabaseServerClient();
+  const { data: assignment, error: assignmentError } = await supabase.from("assignments")
+    .select("id,title,subject_id,drive_folder_id")
+    .eq("id", assignmentId)
+    .single();
+  if (assignmentError || !assignment) throw assignmentError ?? new Error("El trabajo práctico no existe.");
+  if (assignment.drive_folder_id) return { subjectId: assignment.subject_id, folderId: assignment.drive_folder_id };
+
+  const { data: subject, error: subjectError } = await supabase.from("subjects")
+    .select("id,name")
+    .eq("id", assignment.subject_id)
+    .single();
+  if (subjectError || !subject) throw subjectError ?? new Error("La materia no existe.");
+  const { data: assignments, error: assignmentsError } = await supabase.from("assignments")
+    .select("id,title")
+    .eq("subject_id", subject.id)
+    .order("title");
+  if (assignmentsError || !assignments?.length) throw assignmentsError ?? new Error("La materia no tiene trabajos prácticos.");
+
+  await createSubjectDriveStructure(subject.id, subject.name, assignments);
+  const { data: repaired, error: repairedError } = await supabase.from("assignments")
+    .select("drive_folder_id")
+    .eq("id", assignmentId)
+    .single();
+  if (repairedError || !repaired?.drive_folder_id) throw repairedError ?? new Error("No se pudo preparar la carpeta de Drive del trabajo práctico.");
+  return { subjectId: subject.id, folderId: repaired.drive_folder_id };
+}
+
 export async function uploadAssignmentDocument(input: {
   subjectId: string; assignmentId: string; folderId: string; kind: "source" | "assignment" | "rubric" | "precedent_work" | "precedent_correction";
   file: File;

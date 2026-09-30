@@ -131,9 +131,16 @@ static NSString *ElementLabel(AXUIElementRef element) {
 
 static BOOL PressNewChat(NSRunningApplication *application) {
     if ([application.bundleIdentifier isEqualToString:@"com.openai.codex"]) {
-        // The unified ChatGPT/Codex desktop app exposes this documented command
-        // for a new standalone GPT conversation. It keeps the professor review
-        // separate from the Olympus development task and the user's projects.
+        // The unified desktop app exposes a native menu command for a fresh
+        // conversation in the active mode.
+        AXUIElementRef root = AXUIElementCreateApplication(application.processIdentifier);
+        AXUIElementRef newChat = CopyMatchingDescendant(root,
+            [NSSet setWithObjects:(NSString *)kAXMenuItemRole, nil],
+            @[@"chat nuevo", @"new chat", @"nuevo chat"]);
+        BOOL pressed = newChat && ClickElement(newChat);
+        if (newChat) CFRelease(newChat);
+        CFRelease(root);
+        if (pressed) { [NSThread sleepForTimeInterval:2.5]; return YES; }
         PostKeyToPID(application.processIdentifier, 31, kCGEventFlagMaskCommand | kCGEventFlagMaskAlternate); // Command-Option-O
         [NSThread sleepForTimeInterval:2.5];
         return YES;
@@ -301,6 +308,13 @@ BOOL OlympusSendPromptInNewChat(NSString *bundleIdentifier, NSString *prompt, NS
     return SendPrompt(application, prompt, error);
 }
 
+BOOL OlympusOpenNewChat(NSString *bundleIdentifier, NSError **error) {
+    NSRunningApplication *application = RaiseApplication(bundleIdentifier, error); if (!application) return NO;
+    if (PressNewChat(application)) return YES;
+    if (error) *error = AIError(3, @"No pude abrir y confirmar una conversación nueva.");
+    return NO;
+}
+
 BOOL OlympusSendPromptInActiveChat(NSString *bundleIdentifier, NSString *prompt, NSError **error) {
     NSRunningApplication *application = RaiseApplication(bundleIdentifier, error); if (!application) return NO;
     return SendPrompt(application, prompt, error);
@@ -318,9 +332,7 @@ static BOOL ApplicationContainsLabel(NSRunningApplication *application, NSString
     CFRelease(root); return found;
 }
 
-BOOL OlympusSendPromptWithAttachmentInNewChat(NSString *bundleIdentifier, NSString *prompt, NSURL *attachment, NSError **error) {
-    NSRunningApplication *application = RaiseApplication(bundleIdentifier, error); if (!application) return NO;
-    if (!PressNewChat(application)) { if (error) *error = AIError(3, @"No pude abrir y confirmar una conversación nueva."); return NO; }
+static BOOL SendPromptWithAttachment(NSRunningApplication *application, NSString *prompt, NSURL *attachment, NSError **error) {
     AXUIElementRef composer = CopyBestComposer(application);
     if (!composer) { if (error) *error = AIError(6, @"No encontré el cuadro de mensaje para adjuntar el logo."); return NO; }
     AXUIElementSetAttributeValue(composer, kAXFocusedAttribute, kCFBooleanTrue);
@@ -335,6 +347,17 @@ BOOL OlympusSendPromptWithAttachmentInNewChat(NSString *bundleIdentifier, NSStri
     [pasteboard clearContents]; if (savedItems.count) [pasteboard writeObjects:savedItems];
     if (!attached) { if (error) *error = AIError(7, @"Claude no confirmó que el logo estuviera adjunto."); return NO; }
     return SendPrompt(application, prompt, error);
+}
+
+BOOL OlympusSendPromptWithAttachmentInNewChat(NSString *bundleIdentifier, NSString *prompt, NSURL *attachment, NSError **error) {
+    NSRunningApplication *application = RaiseApplication(bundleIdentifier, error); if (!application) return NO;
+    if (!PressNewChat(application)) { if (error) *error = AIError(3, @"No pude abrir y confirmar una conversación nueva."); return NO; }
+    return SendPromptWithAttachment(application, prompt, attachment, error);
+}
+
+BOOL OlympusSendPromptWithAttachmentInActiveChat(NSString *bundleIdentifier, NSString *prompt, NSURL *attachment, NSError **error) {
+    NSRunningApplication *application = RaiseApplication(bundleIdentifier, error); if (!application) return NO;
+    return SendPromptWithAttachment(application, prompt, attachment, error);
 }
 
 static NSString *Normalized(NSString *value) {

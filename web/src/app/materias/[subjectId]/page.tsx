@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { AIModelFields } from "@/components/ai-model-fields";
 import { DEFAULT_AI_SETTINGS } from "@/lib/ai/settings";
+import { modelPreferenceLabel } from "@/lib/ai/model-options";
 import { saveSubjectAISettings } from "./actions";
 
 export default async function SubjectPage({ params, searchParams }: { params: Promise<{ subjectId: string }>; searchParams: Promise<{ error?: string; saved?: string }> }) {
@@ -24,7 +25,7 @@ export default async function SubjectPage({ params, searchParams }: { params: Pr
         <label className="block"><span className="mb-2 block text-sm font-semibold">Desarrollo con Claude</span><textarea name="developmentPrompt" defaultValue={subject.student_prompt ?? ""} placeholder={general?.development_prompt || "Configuralo en la sección general"} rows={5} className="w-full rounded-xl border border-slate-200 p-3 text-sm"/></label>
         <label className="block"><span className="mb-2 block text-sm font-semibold">Corrección con ChatGPT</span><textarea name="correctionPrompt" defaultValue={subject.professor_prompt ?? ""} placeholder={general?.correction_prompt || "Configuralo en la sección general"} rows={5} className="w-full rounded-xl border border-slate-200 p-3 text-sm"/></label>
         <label className="block"><span className="mb-2 block text-sm font-semibold">Informe técnico con Claude</span><textarea name="studyReportPrompt" defaultValue={subject.study_report_prompt ?? ""} placeholder={general?.study_report_prompt || "Configuralo en la sección general"} rows={5} className="w-full rounded-xl border border-slate-200 p-3 text-sm"/></label>
-        <div className="grid gap-4 md:grid-cols-2"><AIModelFields provider="claude" prefix="claude" model={subject.claude_model} effort={subject.claude_effort} allowInherit inheritedLabel={`configuración general (${general?.claude_model || DEFAULT_AI_SETTINGS.claudeModel})`}/><AIModelFields provider="chatgpt" prefix="chatgpt" model={subject.chatgpt_model} effort={subject.chatgpt_effort} allowInherit inheritedLabel={`configuración general (${general?.chatgpt_model || DEFAULT_AI_SETTINGS.chatgptModel})`}/></div>
+        <div className="grid gap-4 md:grid-cols-2"><AIModelFields provider="claude" prefix="claude" model={subject.claude_model} effort={subject.claude_effort} allowInherit inheritedLabel={`configuración general (${modelPreferenceLabel("claude", general?.claude_model || DEFAULT_AI_SETTINGS.claudeModel)})`}/><AIModelFields provider="chatgpt" prefix="chatgpt" model={subject.chatgpt_model} effort={subject.chatgpt_effort} allowInherit inheritedLabel={`configuración general (${modelPreferenceLabel("chatgpt", general?.chatgpt_model || DEFAULT_AI_SETTINGS.chatgptModel)})`}/></div>
         {query.error && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">No se pudo guardar la configuración. Revisá los valores.</p>}{query.saved && <p role="status" className="rounded-xl bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">Configuración de la materia guardada.</p>}
         <div className="flex justify-end"><button className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white">Guardar configuración de la materia</button></div>
       </form>

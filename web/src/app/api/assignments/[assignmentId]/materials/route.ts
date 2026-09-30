@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { uploadAssignmentDocument } from "@/lib/drive/storage";
+import { ensureAssignmentDriveFolder, uploadAssignmentDocument } from "@/lib/drive/storage";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { documentKindByCategory, isMaterialCategory, validateMaterialFile } from "@/lib/materials";
 
@@ -21,12 +21,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       .select("id,subject_id,drive_folder_id")
       .eq("id", assignmentId)
       .single();
-    if (!assignment?.drive_folder_id) return NextResponse.json({ error: "El TP no tiene una carpeta de Drive disponible." }, { status: 404 });
+    if (!assignment) return NextResponse.json({ error: "El trabajo práctico no existe." }, { status: 404 });
+    const driveLocation = assignment.drive_folder_id
+      ? { subjectId: assignment.subject_id, folderId: assignment.drive_folder_id }
+      : await ensureAssignmentDriveFolder(assignmentId);
 
     const document = await uploadAssignmentDocument({
-      subjectId: assignment.subject_id,
+      subjectId: driveLocation.subjectId,
       assignmentId,
-      folderId: assignment.drive_folder_id,
+      folderId: driveLocation.folderId,
       kind: documentKindByCategory[category],
       file,
     });

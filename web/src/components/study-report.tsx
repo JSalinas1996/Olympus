@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { EFFORT_LABELS, isEffort } from "@/lib/ai/model-options";
+import { EFFORT_LABELS, buildAIModelSelection, effortOptionsFor, isEffort, modelPreferenceLabel } from "@/lib/ai/model-options";
 import { buildStudyReportPrompt } from "@/lib/study-report";
 
 type FileSummary = { id: string; name: string; url: string | null };
 type NativeFile = { fileName: string; mimeType: string; fileBase64: string };
-type NativeProgress = { status?: string; stage?: string; fileName?: string };
+type ResolvedModel = { provider?: string; requestedModel?: string; modelMode?: string; model?: string; effort?: string };
+type NativeProgress = { status?: string; stage?: string; fileName?: string; resolvedModels?: { claude?: ResolvedModel } };
+type NativeComplete = { file: NativeFile; resolvedModels?: { claude?: ResolvedModel } };
 
 type Props = {
   assignmentId: string;
@@ -48,24 +50,27 @@ function blobToBase64(blob: Blob) {
 
 export function StudyReport(props: Props) {
   const router = useRouter(); const [native, setNative] = useState(false); const [running, setRunning] = useState(false);
-  const [status, setStatus] = useState(""); const [stage, setStage] = useState(""); const [pending, setPending] = useState<NativeFile | null>(null);
+  const [status, setStatus] = useState(""); const [stage, setStage] = useState(""); const [pending, setPending] = useState<NativeComplete | null>(null);
+  const [claudeEffort, setClaudeEffort] = useState(props.claudeModel.effort);
+  const [resolvedModel, setResolvedModel] = useState<ResolvedModel | null>(null);
+  const requestedClaude = buildAIModelSelection("claude", props.claudeModel.model, claudeEffort);
 
-  const publish = useCallback(async (file: NativeFile) => {
-    setPending(file); setStage("publicando"); setStatus("Guardando el informe técnico en Google Drive…");
+  const publish = useCallback(async (detail: NativeComplete) => {
+    setPending(detail); setStage("publicando"); setStatus("Guardando el informe técnico en Google Drive…");
     try {
-      const body = new FormData(); body.set("file", fileFromBase64(file)); body.set("configurationSnapshot", JSON.stringify({ claude: props.claudeModel, reportPromptOrigin: props.reportPromptOrigin }));
+      const body = new FormData(); body.set("file", fileFromBase64(detail.file)); body.set("configurationSnapshot", JSON.stringify({ requested: { claude: { ...requestedClaude, origin: props.claudeModel.origin } }, resolved: detail.resolvedModels ?? { claude: resolvedModel }, reportPromptOrigin: props.reportPromptOrigin }));
       const response = await fetch(`/api/assignments/${props.assignmentId}/study-report`, { method: "POST", body });
       const result = await response.json().catch(() => ({})); if (!response.ok) throw new Error(result.error || "No se pudo guardar el informe.");
       setPending(null); setStage("completado"); setStatus(result.warning || "Informe técnico guardado en Google Drive."); nativeSend("study-report-persisted"); router.refresh();
     } catch (error) { setStage("guardado pendiente"); setStatus(`${error instanceof Error ? error.message : "No se pudo guardar el informe."} Podés reintentar sin volver a generarlo.`); }
     finally { setRunning(false); }
-  }, [props.assignmentId, props.claudeModel, props.reportPromptOrigin, router]);
+  }, [props.assignmentId, props.claudeModel.origin, props.reportPromptOrigin, requestedClaude, resolvedModel, router]);
 
   useEffect(() => {
     const detect = () => setNative(nativeAvailable());
-    const progress = (event: Event) => { const detail = (event as CustomEvent<NativeProgress>).detail; if (detail.status) setStatus(detail.status); if (detail.stage) setStage(detail.stage); };
+    const progress = (event: Event) => { const detail = (event as CustomEvent<NativeProgress>).detail; if (detail.status) setStatus(detail.status); if (detail.stage) setStage(detail.stage); if (detail.resolvedModels?.claude) setResolvedModel(detail.resolvedModels.claude); };
     const failed = (event: Event) => { progress(event); setRunning(false); };
-    const complete = (event: Event) => { const detail = (event as CustomEvent<{ file: NativeFile }>).detail; void publish(detail.file); };
+    const complete = (event: Event) => { const detail = (event as CustomEvent<NativeComplete>).detail; if (detail.resolvedModels?.claude) setResolvedModel(detail.resolvedModels.claude); void publish(detail); };
     detect(); window.addEventListener("olympus-native-ready", detect); window.addEventListener("olympus-study-report-progress", progress); window.addEventListener("olympus-study-report-failed", failed); window.addEventListener("olympus-study-report-complete", complete);
     return () => { window.removeEventListener("olympus-native-ready", detect); window.removeEventListener("olympus-study-report-progress", progress); window.removeEventListener("olympus-study-report-failed", failed); window.removeEventListener("olympus-study-report-complete", complete); };
   }, [publish]);
@@ -76,21 +81,21 @@ export function StudyReport(props: Props) {
   ].filter(Boolean) as string[];
 
   const start = async () => {
-    setRunning(true); setStage("preparando"); setStatus("Preparando la entrega final y el logo…");
+    setRunning(true); setStage("preparando"); setStatus("Preparando la entrega final y el logo…"); setResolvedModel(null);
     try {
       const [contextResponse, logoResponse] = await Promise.all([fetch(`/api/assignments/${props.assignmentId}/study-report/context`), fetch("/api/settings/logo/download")]);
       const context = await contextResponse.json().catch(() => ({})); if (!contextResponse.ok) throw new Error(context.error || "No se pudo preparar la entrega final.");
       if (!logoResponse.ok) { const result = await logoResponse.json().catch(() => ({})); throw new Error(result.error || "No se pudo preparar el logo."); }
       const logoBlob = await logoResponse.blob(); const logoBase64 = await blobToBase64(logoBlob);
       const prompt = buildStudyReportPrompt({ reportPrompt: props.reportPrompt, reviewContext: props.reviewContext, finalSections: context.finalSections });
-      nativeSend("start-study-report", { prompt, claudeModel: { provider: "claude", model: props.claudeModel.model, effort: props.claudeModel.effort }, logo: { fileName: props.logo!.name, mimeType: logoBlob.type, fileBase64: logoBase64 } });
+      nativeSend("start-study-report", { prompt, claudeModel: requestedClaude, logo: { fileName: props.logo!.name, mimeType: logoBlob.type, fileBase64: logoBase64 } });
       setStatus("Comprobando el modelo de Claude…");
     } catch (error) { setStatus(error instanceof Error ? error.message : "No se pudo preparar el informe."); setStage("fallido"); setRunning(false); }
   };
 
   return <section className="mt-6 rounded-2xl border border-violet-200 bg-violet-50 p-6">
     <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-serif text-2xl font-semibold">Informe técnico de estudio</h2><p className="mt-1 text-sm text-slate-600">Claude lo genera como Word editable cuando vos decidís que la entrega está lista.</p></div>{props.logo?.url && <a href={props.logo.url} target="_blank" rel="noreferrer" className="rounded-xl border border-violet-200 bg-white px-4 py-2 text-sm font-semibold">Ver logo</a>}</div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase text-slate-400">Entrega final</p><p className="mt-1 text-sm font-semibold">{props.finalDeliveries.length ? props.finalDeliveries.map(file => file.name).join(", ") : "Pendiente"}</p></div><div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase text-slate-400">Prompt · {props.reportPromptOrigin}</p><p className="mt-1 text-sm font-semibold">{props.reportPrompt ? "Configurado" : "Sin configurar"}</p></div><div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase text-slate-400">Claude · {props.claudeModel.origin}</p><p className="mt-1 text-sm font-semibold">{props.claudeModel.model || "Sin configurar"} · {effortLabel(props.claudeModel.effort)}</p></div></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase text-slate-400">Entrega final</p><p className="mt-1 text-sm font-semibold">{props.finalDeliveries.length ? props.finalDeliveries.map(file => file.name).join(", ") : "Pendiente"}</p></div><div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase text-slate-400">Prompt · {props.reportPromptOrigin}</p><p className="mt-1 text-sm font-semibold">{props.reportPrompt ? "Configurado" : "Sin configurar"}</p></div><div className="rounded-xl bg-white p-3"><p className="text-xs font-bold uppercase text-slate-400">Claude · {props.claudeModel.origin}</p><p className="mt-1 text-sm font-semibold">{modelPreferenceLabel("claude", props.claudeModel.model) || "Sin configurar"}</p><label className="mt-3 block text-xs font-semibold text-slate-600">Razonamiento para este informe<select value={claudeEffort} onChange={event => setClaudeEffort(event.target.value)} disabled={running} className="mt-1 h-10 w-full rounded-lg border border-violet-200 bg-white px-3 text-sm">{effortOptionsFor("claude").map(value => <option key={value} value={value}>{EFFORT_LABELS[value]}</option>)}</select></label>{resolvedModel?.model && <p className="mt-2 text-xs font-semibold text-emerald-700">Seleccionado: {resolvedModel.model} · {effortLabel(resolvedModel.effort || claudeEffort)}</p>}</div></div>
     {!native && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Abrí este TP desde Olympus Campus para generar el informe.</p>}
     {blockers.length > 0 && <p className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{blockers.join(" ")}</p>}
     <div className="mt-4 flex gap-3"><button type="button" disabled={!native || running || blockers.length > 0} onClick={() => void start()} className="flex-1 rounded-xl bg-violet-700 px-5 py-4 font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40">{running ? "Generando informe…" : "Generar informe técnico"}</button>{running && <button type="button" onClick={() => nativeSend("cancel-study-report")} className="rounded-xl border border-red-300 bg-white px-4 text-sm font-semibold text-red-700">Cancelar</button>}</div>

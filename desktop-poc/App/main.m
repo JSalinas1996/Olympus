@@ -355,7 +355,7 @@ static NSBox *Separator(void) {
     self.backendTask = [NSTask new];
     self.backendTask.executableURL = [NSURL fileURLWithPath:@"/bin/zsh"];
     self.backendTask.currentDirectoryURL = [NSURL fileURLWithPath:@"/Users/joaquin/Documents/ChatGPT/Olympus/web"];
-    self.backendTask.arguments = @[@"-lc", @"exec '/Users/joaquin/.nvm/versions/node/v24.15.0/bin/npm' run dev -- --hostname 127.0.0.1 --port 43127"];
+    self.backendTask.arguments = @[@"-lc", @"exec '/Users/joaquin/.nvm/versions/node/v24.15.0/bin/node' './node_modules/next/dist/bin/next' dev --hostname localhost --port 3000"];
     NSMutableDictionary *environment = NSProcessInfo.processInfo.environment.mutableCopy;
     environment[@"PATH"] = [@"/Users/joaquin/.nvm/versions/node/v24.15.0/bin:" stringByAppendingString:environment[@"PATH"] ?: @""];
     self.backendTask.environment = environment;
@@ -377,7 +377,26 @@ static NSBox *Separator(void) {
 }
 
 - (void)loadCampus {
-    [self.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:43127"] cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:10]];
+    WKHTTPCookieStore *cookieStore = self.webView.configuration.websiteDataStore.httpCookieStore;
+    __weak OlympusDelegate *weakSelf = self;
+    [cookieStore getAllCookies:^(NSArray<NSHTTPCookie *> *cookies) {
+        OlympusDelegate *strongSelf = weakSelf; if (!strongSelf) return;
+        dispatch_group_t migration = dispatch_group_create();
+        for (NSHTTPCookie *cookie in cookies) {
+            if (![cookie.domain containsString:@"127.0.0.1"] || ![cookie.name hasPrefix:@"sb-"]) continue;
+            NSMutableDictionary<NSHTTPCookiePropertyKey, id> *properties = cookie.properties.mutableCopy;
+            properties[NSHTTPCookieDomain] = @"localhost";
+            [properties removeObjectForKey:NSHTTPCookieOriginURL];
+            NSHTTPCookie *migrated = [NSHTTPCookie cookieWithProperties:properties];
+            if (!migrated) continue;
+            dispatch_group_enter(migration);
+            [cookieStore setCookie:migrated completionHandler:^{ dispatch_group_leave(migration); }];
+        }
+        dispatch_group_notify(migration, dispatch_get_main_queue(), ^{
+            OlympusDelegate *readySelf = weakSelf; if (!readySelf) return;
+            [readySelf.webView loadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"http://localhost:3000"] cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:10]];
+        });
+    }];
 }
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
@@ -479,7 +498,7 @@ completionHandler:(void (^)(NSArray<NSURL *> * _Nullable URLs))completionHandler
 
 - (void)webView:(WKWebView *)webView decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
     NSURL *url = navigationAction.request.URL;
-    if ([url.host isEqualToString:@"127.0.0.1"] && [url.path hasPrefix:@"/api/documents/"] && [url.path hasSuffix:@"/download"]) {
+    if (([url.host isEqualToString:@"127.0.0.1"] || [url.host isEqualToString:@"localhost"]) && [url.path hasPrefix:@"/api/documents/"] && [url.path hasSuffix:@"/download"]) {
         decisionHandler(WKNavigationActionPolicyCancel);
         [self downloadFinalAtURL:url];
         return;
@@ -536,11 +555,14 @@ completionHandler:(void (^)(NSArray<NSURL *> * _Nullable URLs))completionHandler
         self.cycleRunning = YES; NSDictionary *claudeModel = [payload[@"claudeModel"] isKindOfClass:NSDictionary.class] ? payload[@"claudeModel"] : @{}; NSDictionary *chatGPTModel = [payload[@"chatgptModel"] isKindOfClass:NSDictionary.class] ? payload[@"chatgptModel"] : @{};
         __weak OlympusDelegate *weakSelf = self;
         dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-            NSError *modelError = nil; BOOL claudeOK = OlympusEnsureModelSelection(@"com.anthropic.claudefordesktop", claudeModel, &modelError);
-            BOOL chatGPTOK = claudeOK && OlympusEnsureModelSelection(@"com.openai.codex", chatGPTModel, &modelError);
+            NSError *modelError = nil; NSDictionary *resolvedClaude = nil, *resolvedChatGPT = nil;
+            BOOL claudeOK = OlympusOpenNewChat(@"com.anthropic.claudefordesktop", &modelError) && OlympusEnsureModelSelection(@"com.anthropic.claudefordesktop", claudeModel, &resolvedClaude, &modelError);
+            BOOL chatGPTOK = claudeOK && OlympusOpenNewChat(@"com.openai.codex", &modelError) && OlympusEnsureModelSelection(@"com.openai.codex", chatGPTModel, &resolvedChatGPT, &modelError);
             dispatch_async(dispatch_get_main_queue(), ^{
                 OlympusDelegate *strongSelf = weakSelf; if (!strongSelf) return; strongSelf.cycleRunning = NO;
-                [strongSelf emitEvent:@"olympus-model-check-result" detail:@{ @"stage": chatGPTOK ? @"modelos listos" : @"configuración requerida", @"status": chatGPTOK ? @"Claude y ChatGPT coinciden con la configuración de Olympus." : modelError.localizedDescription ?: @"No se pudieron comprobar los modelos." }];
+                NSMutableDictionary *detail = [@{ @"stage": chatGPTOK ? @"modelos listos" : @"configuración requerida", @"status": chatGPTOK ? @"Claude y ChatGPT están listos con las versiones más recientes disponibles." : modelError.localizedDescription ?: @"No se pudieron comprobar los modelos." } mutableCopy];
+                if (resolvedClaude || resolvedChatGPT) detail[@"resolvedModels"] = @{ @"claude": resolvedClaude ?: @{}, @"chatgpt": resolvedChatGPT ?: @{} };
+                [strongSelf emitEvent:@"olympus-model-check-result" detail:detail];
                 [strongSelf.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
             });
         });
@@ -575,7 +597,7 @@ completionHandler:(void (^)(NSArray<NSURL *> * _Nullable URLs))completionHandler
                     [strongSelf emitEvent:@"olympus-study-report-failed" detail:detail];
                 } else {
                     strongSelf.activeRunDirectory = result[@"runDirectory"];
-                    [strongSelf emitEvent:@"olympus-study-report-complete" detail:@{ @"file": result[@"file"] ?: @{} }];
+                    [strongSelf emitEvent:@"olympus-study-report-complete" detail:@{ @"file": result[@"file"] ?: @{}, @"resolvedModels": result[@"resolvedModels"] ?: @{} }];
                 }
                 [strongSelf.window makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES];
             });

@@ -34,6 +34,14 @@ int main(void) {
         Require(OlympusModelLabelMatches(@"Modelo: Opus 5 Medio 1.5×", @"Opus 5", @"medium"), @"reconoce modelo y esfuerzo");
         Require(!OlympusModelLabelMatches(@"Modelo: Opus 5 Máx", @"Opus 5", @"medium"), @"rechaza esfuerzo distinto");
         Require(!OlympusModelLabelMatches(@"Modelo: Sonnet 5 Medio", @"Opus 5", @"medium"), @"rechaza modelo distinto");
+        Require(OlympusModelLabelMatches(@"GPT-6 Astra Ligero", @"GPT-6 Astra", @"low"), @"reconoce Ligero como esfuerzo bajo");
+        Require(!OlympusModelLabelMatches(@"GPT-6 Astra Muy alto", @"GPT-6 Astra", @"high"), @"no confunde Alto con Muy alto");
+        Require(OlympusModelFamilyMatchesLabel(@"Modelo: Opus 5.5 Alto 1.5×", @"opus"), @"reconoce familia Opus aunque cambie la versión");
+        Require(!OlympusModelFamilyMatchesLabel(@"Modelo: Sonnet 5.5 Alto", @"opus"), @"no cambia entre familias Claude");
+        Require(OlympusModelFamilyMatchesLabel(@"GPT-6 Astra Alto", @"astra"), @"reconoce familia ChatGPT con versión anterior al nombre");
+        Require(!OlympusModelFamilyMatchesLabel(@"GPT-6 Astra Alto", @"gpt"), @"GPT base no absorbe una familia con nombre");
+        Require(OlympusCompareModelVersions(@"Opus 5.10", @"Opus 5.5", @"opus") == NSOrderedDescending, @"ordena versiones por componentes numéricos");
+        Require([OlympusBestModelLabel(@[@"Opus 5 Medio 1.5×", @"Sonnet 8 Alto", @"Opus 5.5 Alto 2×", @"Opus 5.10 Alto"], @"opus") isEqualToString:@"Opus 5.10 Alto"], @"elige la última versión disponible dentro de la familia");
 
         NSString *folder = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
         [[NSFileManager defaultManager] createDirectoryAtPath:folder withIntermediateDirectories:YES attributes:nil error:nil];

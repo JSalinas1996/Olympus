@@ -24,7 +24,8 @@ export async function createSubject(formData: FormData) {
   if (assignmentsError) redirect("/materias/nueva?error=No pudimos crear los trabajos prácticos");
   try {
     await createSubjectDriveStructure(subject.id, subject.name, assignments);
-  } catch {
+  } catch (driveError) {
+    console.error("No se pudo crear la estructura inicial de Drive; Olympus la reintentará al subir el primer archivo.", driveError);
     redirect("/?drive=structure-error");
   }
   redirect("/");

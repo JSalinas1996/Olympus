@@ -32,7 +32,10 @@ NSDictionary *OlympusRunStudyReport(NSDictionary *payload, OlympusProgressHandle
     if (!prompt.length || !logoName.length || !logoBase64.length) { if (error) *error = ReportError(1, @"Faltan el prompt o el logo del informe."); return nil; }
     if (cancelled && cancelled()) { if (error) *error = ReportError(9, @"Generación cancelada."); return nil; }
     progress(@{ @"stage": @"comprobando modelo", @"status": @"Olympus está comprobando el modelo de Claude…" });
-    if (!OlympusEnsureModelSelection(ClaudeBundle, selection, error)) return nil;
+    NSDictionary *resolvedClaude = nil;
+    if (!OlympusOpenNewChat(ClaudeBundle, error)) return nil;
+    if (!OlympusEnsureModelSelection(ClaudeBundle, selection, &resolvedClaude, error)) return nil;
+    progress(@{ @"stage": @"modelo listo", @"resolvedModels": @{ @"claude": resolvedClaude ?: @{} }, @"status": @"Olympus comprobó el modelo y el razonamiento de Claude." });
     NSString *runDirectory = OlympusBeginRun(error); if (!runDirectory) return nil;
     @try {
         NSData *logoData = [[NSData alloc] initWithBase64EncodedString:logoBase64 options:NSDataBase64DecodingIgnoreUnknownCharacters];
@@ -43,7 +46,7 @@ NSDictionary *OlympusRunStudyReport(NSDictionary *payload, OlympusProgressHandle
         NSString *strictPrompt = [prompt stringByAppendingString:@"\n\nINSTRUCCIÓN DE ARCHIVO DE OLYMPUS: Generá exactamente un archivo Word (.docx), sin PDF ni archivos adicionales. Insertá dentro del Word el logo que está adjunto a esta conversación. No respondas sólo con texto: el archivo descargable es obligatorio."];
         progress(@{ @"stage": @"generando", @"status": @"Claude está generando el informe técnico Word con el logo…" });
         NSError *stepError = nil;
-        if (!OlympusSendPromptWithAttachmentInNewChat(ClaudeBundle, strictPrompt, logoURL, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
+        if (!OlympusSendPromptWithAttachmentInActiveChat(ClaudeBundle, strictPrompt, logoURL, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
         if (!OlympusWaitAndPressNewDownload(ClaudeBundle, @"docx", 0, 480, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
         if (cancelled && cancelled()) { if (error) *error = ReportError(9, @"Generación cancelada."); OlympusCleanRun(runDirectory); return nil; }
         NSURL *download = OlympusWaitForNewOfficeFile(downloadSnapshot, @"docx", 120, &stepError);
@@ -57,7 +60,7 @@ NSDictionary *OlympusRunStudyReport(NSDictionary *payload, OlympusProgressHandle
         NSDictionary *file = PublicWord(current, download.lastPathComponent, &stepError);
         if (!file) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
         progress(@{ @"stage": @"archivo recibido", @"fileName": download.lastPathComponent, @"status": @"Olympus comprobó el Word y el logo incorporado." });
-        return @{ @"file": file, @"runDirectory": runDirectory };
+        return @{ @"file": file, @"resolvedModels": @{ @"claude": resolvedClaude ?: @{} }, @"runDirectory": runDirectory };
     } @catch (NSException *exception) {
         OlympusCleanRun(runDirectory); if (error) *error = ReportError(8, exception.reason ?: @"La generación del informe falló."); return nil;
     }

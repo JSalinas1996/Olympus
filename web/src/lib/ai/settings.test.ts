@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { nativeModelSelection, resolveAISettings } from "./settings";
+import { DEFAULT_AI_SETTINGS, nativeModelSelection, resolveAISettings } from "./settings";
 
 describe("resolveAISettings", () => {
   const general = {
@@ -38,6 +38,11 @@ describe("resolveAISettings", () => {
 
   it("builds the native contract", () => {
     const result = resolveAISettings({ general });
-    expect(nativeModelSelection(result, "claude")).toEqual({ provider: "claude", model: "Opus 5", effort: "medium" });
+    expect(nativeModelSelection(result, "claude")).toEqual({ provider: "claude", modelMode: "family", model: "opus", effort: "medium" });
+  });
+
+  it("defaults new configurations to high effort", () => {
+    expect(DEFAULT_AI_SETTINGS.claudeEffort).toBe("high");
+    expect(DEFAULT_AI_SETTINGS.chatgptEffort).toBe("high");
   });
 });

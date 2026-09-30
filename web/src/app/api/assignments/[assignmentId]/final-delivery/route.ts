@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { uploadFinalDeliveries } from "@/lib/drive/storage";
+import { ensureAssignmentDriveFolder, uploadFinalDeliveries } from "@/lib/drive/storage";
 import { validateFinalDeliverySet } from "@/lib/final-delivery";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -19,8 +19,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const supabase = await createSupabaseServerClient(); const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Sesión requerida." }, { status: 401 });
     const { data: assignment } = await supabase.from("assignments").select("id,subject_id,drive_folder_id").eq("id", assignmentId).single();
-    if (!assignment?.drive_folder_id) return NextResponse.json({ error: "El TP no tiene carpeta de Drive." }, { status: 404 });
-    const documents = await uploadFinalDeliveries({ subjectId: assignment.subject_id, assignmentId, folderId: assignment.drive_folder_id, files: normalized });
+    if (!assignment) return NextResponse.json({ error: "El trabajo práctico no existe." }, { status: 404 });
+    const driveLocation = assignment.drive_folder_id
+      ? { subjectId: assignment.subject_id, folderId: assignment.drive_folder_id }
+      : await ensureAssignmentDriveFolder(assignmentId);
+    const documents = await uploadFinalDeliveries({ subjectId: driveLocation.subjectId, assignmentId, folderId: driveLocation.folderId, files: normalized });
     if (documents.length !== normalized.length) throw new Error("No se registraron todos los archivos finales.");
     const { data: run, error: runError } = await supabase.from("ai_runs").insert({ assignment_id: assignmentId, status: "completed", current_round: Math.max(1, rounds), current_step: "published", run_type: "assignment_cycle", configuration_snapshot: configurationSnapshot, idempotency_key: crypto.randomUUID() }).select("id").single();
     if (runError) throw runError;

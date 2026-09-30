@@ -96,7 +96,8 @@ export function Dashboard({ initialSubjects }: { initialSubjects: Subject[] }) {
         <main className="min-w-0 px-5 py-8 lg:px-10 lg:py-10">
           <section className="mb-7 flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950 sm:flex-row sm:items-center">
             <div className="grid size-11 shrink-0 place-items-center rounded-xl bg-amber-100"><Bot className="size-5" /></div>
-            <div><p className="font-semibold">Conectado con tus suscripciones</p><p className="mt-1 text-sm text-amber-800">Desde Olympus Campus podés enviar cada trabajo a Claude y pasar su respuesta a ChatGPT usando las aplicaciones nativas abiertas en tu Mac.</p></div>
+            <div className="min-w-0 flex-1"><p className="font-semibold">Conectado con tus suscripciones</p><p className="mt-1 text-sm text-amber-800">Desde Olympus Campus podés enviar cada trabajo a Claude y pasar su respuesta a ChatGPT usando las aplicaciones nativas abiertas en tu Mac.</p></div>
+            <button type="button" onClick={() => { window.location.href = "/api/google/connect"; }} className="shrink-0 rounded-xl border border-amber-300 bg-white px-4 py-2.5 text-sm font-semibold text-amber-900 hover:bg-amber-100">Conectar o renovar Drive</button>
           </section>
           <div className="flex flex-col justify-between gap-5 xl:flex-row xl:items-end">
             <div><p className="text-sm font-semibold text-blue-700">Mi carrera</p><h1 className="mt-1 font-serif text-4xl font-semibold tracking-tight text-slate-950">Materias</h1><p className="mt-2 text-base text-slate-500">Organizá el material y continuá tus trabajos prácticos.</p></div>

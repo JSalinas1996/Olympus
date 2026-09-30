@@ -1,4 +1,4 @@
-import type { AIEffort, AIModelSelection, AIProvider } from "./model-options";
+import { buildAIModelSelection, type AIModelSelection, type AIProvider } from "./model-options";
 
 export type ConfigurationOrigin = "trabajo" | "materia" | "general" | "sin configurar";
 
@@ -27,10 +27,10 @@ export const DEFAULT_AI_SETTINGS: SettingsLevel = {
   developmentPrompt: "",
   correctionPrompt: "",
   studyReportPrompt: "",
-  claudeModel: "Opus 5",
-  claudeEffort: "medium",
-  chatgptModel: "GPT-5.5",
-  chatgptEffort: "medium",
+  claudeModel: "family:opus",
+  claudeEffort: "high",
+  chatgptModel: "family:gpt",
+  chatgptEffort: "high",
 };
 
 function present(value?: string | null) {
@@ -64,5 +64,5 @@ export function resolveAISettings(input: { general?: SettingsLevel | null; subje
 export function nativeModelSelection(settings: EffectiveAISettings, provider: AIProvider): AIModelSelection {
   const model = provider === "claude" ? settings.claudeModel.value : settings.chatgptModel.value;
   const effort = provider === "claude" ? settings.claudeEffort.value : settings.chatgptEffort.value;
-  return { provider, model, effort: effort as AIEffort };
+  return buildAIModelSelection(provider, model, effort);
 }

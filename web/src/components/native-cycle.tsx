@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { EFFORT_LABELS, isEffort } from "@/lib/ai/model-options";
+import { EFFORT_LABELS, buildAIModelSelection, effortOptionsFor, isEffort, modelPreferenceLabel } from "@/lib/ai/model-options";
 
 declare global {
   interface Window {
@@ -25,9 +25,11 @@ type Props = {
   chatgptModel: { model: string; effort: string; origin: string };
 };
 
-type NativeProgress = { status?: string; stage?: string; round?: number; fileName?: string; evaluation?: string; score?: number | null };
+type ResolvedModel = { provider?: string; requestedModel?: string; modelMode?: string; model?: string; effort?: string };
+type ResolvedModels = { claude?: ResolvedModel; chatgpt?: ResolvedModel };
+type NativeProgress = { status?: string; stage?: string; round?: number; fileName?: string; evaluation?: string; score?: number | null; resolvedModels?: ResolvedModels };
 type NativeFile = { fileName: string; mimeType: string; fileBase64: string };
-type NativeComplete = NativeProgress & { formats: Array<"docx" | "xlsx">; files: NativeFile[]; evaluation: string; rounds: number };
+type NativeComplete = NativeProgress & { formats: Array<"docx" | "xlsx">; files: NativeFile[]; evaluation: string; rounds: number; resolvedModels?: ResolvedModels };
 
 function fileFromBase64(file: NativeFile) {
   const binary = window.atob(file.fileBase64);
@@ -59,6 +61,12 @@ export function NativeCycle(props: Props) {
   const [score, setScore] = useState<number | null>(null);
   const [userFeedback, setUserFeedback] = useState("");
   const [pendingFinal, setPendingFinal] = useState<NativeComplete | null>(null);
+  const [claudeEffort, setClaudeEffort] = useState(props.claudeModel.effort);
+  const [chatgptEffort, setChatgptEffort] = useState(props.chatgptModel.effort);
+  const [resolvedModels, setResolvedModels] = useState<ResolvedModels>({});
+
+  const requestedClaude = useMemo(() => buildAIModelSelection("claude", props.claudeModel.model, claudeEffort), [claudeEffort, props.claudeModel.model]);
+  const requestedChatGPT = useMemo(() => buildAIModelSelection("chatgpt", props.chatgptModel.model, chatgptEffort), [chatgptEffort, props.chatgptModel.model]);
 
   const send = useCallback((action: string, extra: Record<string, unknown> = {}) => {
     window.webkit?.messageHandlers?.olympus?.postMessage({ action, ...extra });
@@ -74,7 +82,11 @@ export function NativeCycle(props: Props) {
       body.set("formats", JSON.stringify(detail.formats));
       body.set("evaluation", detail.evaluation);
       body.set("rounds", String(detail.rounds));
-      body.set("configurationSnapshot", JSON.stringify({ claude: props.claudeModel, chatgpt: props.chatgptModel, formats: detail.formats }));
+      body.set("configurationSnapshot", JSON.stringify({
+        requested: { claude: { ...requestedClaude, origin: props.claudeModel.origin }, chatgpt: { ...requestedChatGPT, origin: props.chatgptModel.origin } },
+        resolved: detail.resolvedModels ?? resolvedModels,
+        formats: detail.formats,
+      }));
       const response = await fetch(`/api/assignments/${props.assignmentId}/final-delivery`, { method: "POST", body });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "No se pudo guardar la entrega final.");
@@ -89,7 +101,7 @@ export function NativeCycle(props: Props) {
     } finally {
       setRunning(false);
     }
-  }, [props.assignmentId, props.claudeModel, props.chatgptModel, router, send]);
+  }, [props.assignmentId, props.claudeModel.origin, props.chatgptModel.origin, requestedClaude, requestedChatGPT, resolvedModels, router, send]);
 
   useEffect(() => {
     const detect = () => setNative(Boolean(window.__OLYMPUS_NATIVE__ && window.webkit?.messageHandlers?.olympus));
@@ -101,6 +113,7 @@ export function NativeCycle(props: Props) {
       if (detail.fileName) setFileName(detail.fileName);
       if (detail.evaluation) setEvaluation(detail.evaluation);
       if (typeof detail.score === "number") setScore(detail.score);
+      if (detail.resolvedModels) setResolvedModels(current => ({ ...current, ...detail.resolvedModels }));
     };
     const failed = (event: Event) => {
       const detail = (event as CustomEvent<NativeProgress>).detail;
@@ -152,10 +165,11 @@ export function NativeCycle(props: Props) {
     setEvaluation("");
     setScore(null);
     setPendingFinal(null);
+    setResolvedModels({});
     send("start-file-cycle", {
       prompt, professorPrompt: props.professorPrompt, reviewContext: props.reviewContext, formats, maxRounds: 3,
-      claudeModel: { provider: "claude", model: props.claudeModel.model, effort: props.claudeModel.effort },
-      chatgptModel: { provider: "chatgpt", model: props.chatgptModel.model, effort: props.chatgptModel.effort },
+      claudeModel: requestedClaude,
+      chatgptModel: requestedChatGPT,
     });
   };
 
@@ -168,11 +182,11 @@ export function NativeCycle(props: Props) {
   if (!native) return <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">Abrí este trabajo desde la aplicación <strong>Olympus Campus</strong> para usar tus sesiones nativas de Claude y ChatGPT.</div>;
 
   return <section className="mt-6 rounded-2xl border border-blue-200 bg-blue-50 p-6">
-    <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-serif text-2xl font-semibold">Desarrollo y corrección con IA</h2><p className="mt-1 max-w-2xl text-sm text-slate-600">Claude crea el archivo, ChatGPT lo corrige y Olympus pide nuevas versiones hasta obtener 10/10. Sólo se guarda la entrega final aprobada.</p></div><div className="flex gap-2"><button type="button" disabled={running || !props.claudeModel.model || !props.chatgptModel.model} onClick={() => { setRunning(true); setStage("comprobando modelo"); setStatus("Comprobando los modelos configurados…"); send("check-models", { claudeModel: { provider: "claude", model: props.claudeModel.model, effort: props.claudeModel.effort }, chatgptModel: { provider: "chatgpt", model: props.chatgptModel.model, effort: props.chatgptModel.effort } }); }} className="rounded-xl border border-blue-300 bg-white px-4 py-2 text-sm font-semibold disabled:opacity-40">Comprobar modelos</button><button type="button" onClick={() => send("open-ai-apps")} className="rounded-xl border border-blue-300 bg-white px-4 py-2 text-sm font-semibold">Abrir Claude y ChatGPT</button></div></div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-blue-200 bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Claude · {props.claudeModel.origin}</p><p className="mt-1 text-sm font-semibold">{props.claudeModel.model || "Sin configurar"} · {effortLabel(props.claudeModel.effort)}</p></div><div className="rounded-xl border border-blue-200 bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">ChatGPT · {props.chatgptModel.origin}</p><p className="mt-1 text-sm font-semibold">{props.chatgptModel.model || "Sin configurar"} · {effortLabel(props.chatgptModel.effort)}</p></div></div>
+    <div className="flex flex-wrap items-start justify-between gap-4"><div><h2 className="font-serif text-2xl font-semibold">Desarrollo y corrección con IA</h2><p className="mt-1 max-w-2xl text-sm text-slate-600">Claude crea el archivo, ChatGPT lo corrige y Olympus pide nuevas versiones hasta obtener 10/10. Sólo se guarda la entrega final aprobada.</p></div><div className="flex gap-2"><button type="button" disabled={running || !props.claudeModel.model || !props.chatgptModel.model} onClick={() => { setRunning(true); setStage("comprobando modelo"); setStatus("Comprobando los modelos configurados…"); setResolvedModels({}); send("check-models", { claudeModel: requestedClaude, chatgptModel: requestedChatGPT }); }} className="rounded-xl border border-blue-300 bg-white px-4 py-2 text-sm font-semibold disabled:opacity-40">Comprobar modelos</button><button type="button" onClick={() => send("open-ai-apps")} className="rounded-xl border border-blue-300 bg-white px-4 py-2 text-sm font-semibold">Abrir Claude y ChatGPT</button></div></div>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-blue-200 bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">Claude · {props.claudeModel.origin}</p><p className="mt-1 text-sm font-semibold">{modelPreferenceLabel("claude", props.claudeModel.model) || "Sin configurar"}</p><label className="mt-3 block text-xs font-semibold text-slate-600">Razonamiento para esta ejecución<select value={claudeEffort} onChange={event => setClaudeEffort(event.target.value)} disabled={running} className="mt-1 h-10 w-full rounded-lg border border-blue-200 bg-white px-3 text-sm">{effortOptionsFor("claude").map(value => <option key={value} value={value}>{EFFORT_LABELS[value]}</option>)}</select></label>{resolvedModels.claude?.model && <p className="mt-2 text-xs font-semibold text-emerald-700">Seleccionado: {resolvedModels.claude.model} · {effortLabel(resolvedModels.claude.effort || claudeEffort)}</p>}</div><div className="rounded-xl border border-blue-200 bg-white p-3"><p className="text-xs font-bold uppercase tracking-wide text-slate-400">ChatGPT · {props.chatgptModel.origin}</p><p className="mt-1 text-sm font-semibold">{modelPreferenceLabel("chatgpt", props.chatgptModel.model) || "Sin configurar"}</p><label className="mt-3 block text-xs font-semibold text-slate-600">Razonamiento para esta ejecución<select value={chatgptEffort} onChange={event => setChatgptEffort(event.target.value)} disabled={running} className="mt-1 h-10 w-full rounded-lg border border-blue-200 bg-white px-3 text-sm">{effortOptionsFor("chatgpt").map(value => <option key={value} value={value}>{EFFORT_LABELS[value]}</option>)}</select></label>{resolvedModels.chatgpt?.model && <p className="mt-2 text-xs font-semibold text-emerald-700">Seleccionado: {resolvedModels.chatgpt.model} · {effortLabel(resolvedModels.chatgpt.effort || chatgptEffort)}</p>}</div></div>
     <div className="mt-5 grid gap-4 md:grid-cols-[280px_1fr]"><fieldset disabled={running} className="rounded-xl border border-blue-200 bg-white p-4"><legend className="px-1 text-sm font-semibold">Archivos que pide el docente</legend><p className="mb-3 text-xs text-slate-500">Podés seleccionar uno o los dos.</p><div className="space-y-2"><label className="flex cursor-pointer items-center gap-3 text-sm font-medium"><input type="checkbox" checked={formats.includes("docx")} onChange={() => toggleFormat("docx")} className="size-4"/>Word (.docx)</label><label className="flex cursor-pointer items-center gap-3 text-sm font-medium"><input type="checkbox" checked={formats.includes("xlsx")} onChange={() => toggleFormat("xlsx")} className="size-4"/>Excel (.xlsx)</label></div></fieldset><label className="text-sm font-semibold">Indicaciones adicionales del alumno<textarea value={userFeedback} onChange={event => setUserFeedback(event.target.value)} disabled={running} rows={4} className="mt-2 w-full rounded-xl border border-blue-200 bg-white p-3 text-sm" placeholder="Ej. Usá un tono más natural, agregá un cuadro comparativo o respetá este criterio de diseño…"/></label></div>
     {blockers.length > 0 && <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{blockers.join(" ")}</div>}
-    <div className="mt-5 flex gap-3"><button type="button" disabled={running || blockers.length > 0} onClick={start} className="flex-1 rounded-xl bg-blue-600 px-5 py-4 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">{running ? "Ciclo en curso…" : stage === "configuración requerida" ? "Volver a comprobar e iniciar" : "Iniciar Claude → ChatGPT → Claude"}</button>{running && <button type="button" onClick={() => { send("cancel-file-cycle"); setStatus("Cancelando el ciclo…"); }} className="rounded-xl border border-red-300 bg-white px-5 py-3 text-sm font-semibold text-red-700">Cancelar</button>}</div>
+    <div className="mt-5 flex gap-3"><button type="button" disabled={running || blockers.length > 0} onClick={start} className="flex-1 rounded-xl bg-blue-600 px-5 py-4 font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-40">{running ? "Ciclo en curso…" : stage === "configuración requerida" ? "Volver a comprobar e iniciar" : props.finalDeliveries.length > 0 ? "Generar nueva versión con IA" : "Iniciar Claude → ChatGPT → Claude"}</button>{running && <button type="button" onClick={() => { send("cancel-file-cycle"); setStatus("Cancelando el ciclo…"); }} className="rounded-xl border border-red-300 bg-white px-5 py-3 text-sm font-semibold text-red-700">Cancelar</button>}</div>
     {status && <div className="mt-4 rounded-xl bg-white px-4 py-3 text-sm text-blue-950"><div className="flex flex-wrap gap-x-5 gap-y-1"><strong>{status}</strong>{round > 0 && <span>Ronda {round}/3</span>}{stage && <span className="capitalize">Etapa: {stage}</span>}{fileName && <span>Archivo: {fileName}</span>}{score !== null && <span>Calificación: {score}/10</span>}</div></div>}
     {evaluation && <details open className="mt-4 rounded-xl bg-white p-4"><summary className="cursor-pointer font-semibold">Última corrección de ChatGPT</summary><pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap font-sans text-sm text-slate-700">{evaluation}</pre></details>}
     {pendingFinal && <button type="button" onClick={() => void publish(pendingFinal)} className="mt-4 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white">Reintentar guardado en Drive</button>}

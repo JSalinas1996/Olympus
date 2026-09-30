@@ -90,6 +90,7 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
     NSString *evaluation = @"";
     NSNumber *score = nil;
     BOOL chatStarted = NO;
+    NSDictionary *resolvedClaude = nil, *resolvedChatGPT = nil;
 
     @try {
         NSString *claudePrompt = [prompt stringByAppendingString:OlympusAutomaticDeliveryInstruction(formats, 1)];
@@ -97,15 +98,16 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
             if (Cancelled(cancelled, error)) { OlympusCleanRun(runDirectory); return nil; }
             progress(@{ @"stage": @"comprobando modelo", @"round": @(round), @"status": @"Olympus está comprobando el modelo de Claude…" });
             NSError *stepError = nil;
-            if (!OlympusEnsureModelSelection(ClaudeBundle, claudeSelection, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
-            progress(@{ @"stage": round == 1 ? @"desarrollando" : @"revisando", @"round": @(round), @"status": round == 1 ? @"Claude está desarrollando todos los archivos solicitados…" : @"Claude está aplicando la corrección a la entrega completa…" });
+            if (round == 1 && !OlympusOpenNewChat(ClaudeBundle, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
+            if (!OlympusEnsureModelSelection(ClaudeBundle, claudeSelection, &resolvedClaude, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
+            progress(@{ @"stage": round == 1 ? @"desarrollando" : @"revisando", @"round": @(round), @"resolvedModels": @{ @"claude": resolvedClaude ?: @{} }, @"status": round == 1 ? @"Claude está desarrollando todos los archivos solicitados…" : @"Claude está aplicando la corrección a la entrega completa…" });
 
             NSDictionary *downloadSnapshot = OlympusSnapshotDownloads();
             NSMutableDictionary<NSString *, NSNumber *> *previousButtons = [NSMutableDictionary dictionary];
             for (NSString *format in formats) previousButtons[format] = @(round == 1 ? 0 : OlympusDownloadButtonCount(ClaudeBundle, format));
             NSUInteger previousOfficeButtons = formats.count > 1 ? (round == 1 ? 0 : OlympusOfficeDownloadButtonCount(ClaudeBundle)) : 0;
 
-            BOOL sent = round == 1 ? OlympusSendPromptInNewChat(ClaudeBundle, claudePrompt, &stepError) : OlympusSendPromptInActiveChat(ClaudeBundle, claudePrompt, &stepError);
+            BOOL sent = OlympusSendPromptInActiveChat(ClaudeBundle, claudePrompt, &stepError);
             if (!sent) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
             if (formats.count > 1 && !OlympusWaitAndPressNewOfficeDownloads(ClaudeBundle, previousOfficeButtons, formats.count, 480, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
 
@@ -134,9 +136,10 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
             NSString *evaluationPrompt = [NSString stringWithFormat:@"%@\n\n%@\n\nActuá como catedrático y corregí esta entrega completa sobre 10 según las consignas, la rúbrica y el material. Evaluá conjuntamente todos los archivos solicitados: si uno falta o no corresponde a su formato, no puede aprobarse. Verificá datos, cálculos, afirmaciones y citas. No inventes fuentes. Enumerá todos los cambios concretos necesarios, indicando el archivo al que corresponde cada uno. Cerrá obligatoriamente con una línea independiente de formato exacto CALIFICACIÓN: X/10.\n\nCONTEXTO ACADÉMICO DEL TP:\n%@\n\nCONTENIDO EXTRAÍDO DE LA ENTREGA DE CLAUDE:\n%@", marker, professorPrompt, reviewContext, [extractedSections componentsJoinedByString:@"\n\n"]];
             NSString *fileNames = JoinedFileNames(currentFiles);
             progress(@{ @"stage": @"comprobando modelo", @"round": @(round), @"fileName": fileNames, @"status": @"Olympus está comprobando el modelo de ChatGPT…" });
-            if (!OlympusEnsureModelSelection(ChatGPTBundle, chatGPTSelection, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
-            progress(@{ @"stage": @"corrigiendo", @"round": @(round), @"fileName": fileNames, @"status": @"ChatGPT está corrigiendo la entrega completa como catedrático…" });
-            BOOL evaluationSent = chatStarted ? OlympusSendPromptInActiveChat(ChatGPTBundle, evaluationPrompt, &stepError) : OlympusSendPromptInNewChat(ChatGPTBundle, evaluationPrompt, &stepError);
+            if (!chatStarted && !OlympusOpenNewChat(ChatGPTBundle, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
+            if (!OlympusEnsureModelSelection(ChatGPTBundle, chatGPTSelection, &resolvedChatGPT, &stepError)) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
+            progress(@{ @"stage": @"corrigiendo", @"round": @(round), @"fileName": fileNames, @"resolvedModels": @{ @"claude": resolvedClaude ?: @{}, @"chatgpt": resolvedChatGPT ?: @{} }, @"status": @"ChatGPT está corrigiendo la entrega completa como catedrático…" });
+            BOOL evaluationSent = OlympusSendPromptInActiveChat(ChatGPTBundle, evaluationPrompt, &stepError);
             if (!evaluationSent) { if (error) *error = stepError; OlympusCleanRun(runDirectory); return nil; }
             chatStarted = YES;
             evaluation = OlympusWaitForScoredResponse(ChatGPTBundle, evaluationPrompt, 480, &stepError);
@@ -145,14 +148,14 @@ NSDictionary *OlympusRunFileCycle(NSDictionary *payload, OlympusProgressHandler 
             if (!score) { if (error) *error = CycleError(5, @"No pude reconocer la calificación final de ChatGPT."); OlympusCleanRun(runDirectory); return nil; }
             progress(@{ @"stage": score.doubleValue == 10 ? @"aprobado" : @"corrección recibida", @"round": @(round), @"fileName": fileNames, @"evaluation": evaluation, @"score": score, @"status": score.doubleValue == 10 ? @"ChatGPT aprobó la entrega completa con 10/10." : @"ChatGPT pidió cambios; Olympus volverá a Claude con la corrección completa." });
             if (score.doubleValue == 10) {
-                return @{ @"approved": @YES, @"rounds": @(round), @"formats": formats, @"files": currentFiles, @"fileName": fileNames, @"evaluation": evaluation, @"score": @10, @"runDirectory": runDirectory };
+                return @{ @"approved": @YES, @"rounds": @(round), @"formats": formats, @"files": currentFiles, @"fileName": fileNames, @"evaluation": evaluation, @"score": @10, @"resolvedModels": @{ @"claude": resolvedClaude ?: @{}, @"chatgpt": resolvedChatGPT ?: @{} }, @"runDirectory": runDirectory };
             }
             if (round < maxRounds) {
                 claudePrompt = [NSString stringWithFormat:@"Aplicá todas las correcciones del catedrático a la entrega de la ronda anterior y generá un conjunto completo que la reemplace. Corregí coordinadamente todos los archivos, aun cuando una observación mencione sólo uno. Conservá únicamente datos, cálculos, normas y citas verificables.\n\nCORRECCIÓN COMPLETA DE CHATGPT:\n%@%@", evaluation, OlympusAutomaticDeliveryInstruction(formats, round + 1)];
             }
         }
         OlympusCleanRun(runDirectory);
-        return @{ @"approved": @NO, @"rounds": @(maxRounds), @"fileName": JoinedFileNames(currentFiles), @"evaluation": evaluation, @"score": score ?: @0, @"status": @"Se alcanzaron tres rondas sin obtener 10/10. No se publicó ningún archivo. Podés agregar una indicación y volver a iniciar." };
+        return @{ @"approved": @NO, @"rounds": @(maxRounds), @"fileName": JoinedFileNames(currentFiles), @"evaluation": evaluation, @"score": score ?: @0, @"resolvedModels": @{ @"claude": resolvedClaude ?: @{}, @"chatgpt": resolvedChatGPT ?: @{} }, @"status": @"Se alcanzaron tres rondas sin obtener 10/10. No se publicó ningún archivo. Podés agregar una indicación y volver a iniciar." };
     } @catch (NSException *exception) {
         OlympusCleanRun(runDirectory);
         if (error) *error = CycleError(8, exception.reason ?: @"El ciclo nativo falló.");

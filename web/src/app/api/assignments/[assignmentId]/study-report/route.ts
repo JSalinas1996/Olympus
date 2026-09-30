@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { extractDocument } from "@/lib/documents/extract";
-import { uploadStudyReport } from "@/lib/drive/storage";
+import { ensureAssignmentDriveFolder, uploadStudyReport } from "@/lib/drive/storage";
 import { validateStudyReportFile, validateStudyReportPackage } from "@/lib/study-report";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -16,7 +16,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ ass
     const supabase = await createSupabaseServerClient(); const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ error: "Sesión requerida." }, { status: 401 });
     const { data: assignment } = await supabase.from("assignments").select("id,subject_id,drive_folder_id").eq("id", assignmentId).single();
-    if (!assignment?.drive_folder_id) return NextResponse.json({ error: "El TP no tiene carpeta de Drive." }, { status: 404 });
+    if (!assignment) return NextResponse.json({ error: "El trabajo práctico no existe." }, { status: 404 });
+    const driveLocation = assignment.drive_folder_id
+      ? { subjectId: assignment.subject_id, folderId: assignment.drive_folder_id }
+      : await ensureAssignmentDriveFolder(assignmentId);
     let snapshot: unknown = {};
     const rawSnapshot = String(data.get("configurationSnapshot") || "{}");
     if (rawSnapshot.length <= 10000) { try { const parsed = JSON.parse(rawSnapshot); if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) snapshot = parsed; } catch {} }
@@ -24,7 +27,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ ass
     if (runError) throw runError;
     let report;
     try {
-      report = await uploadStudyReport({ subjectId: assignment.subject_id, assignmentId, folderId: assignment.drive_folder_id, file: normalized });
+      report = await uploadStudyReport({ subjectId: driveLocation.subjectId, assignmentId, folderId: driveLocation.folderId, file: normalized });
     } catch (uploadError) {
       await supabase.from("ai_runs").update({ status: "blocked", current_step: "publish_failed", error_message: uploadError instanceof Error ? uploadError.message.slice(0, 1000) : "No se pudo guardar el informe.", updated_at: new Date().toISOString() }).eq("id", run.id);
       throw uploadError;
